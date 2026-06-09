@@ -5,17 +5,40 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        ink: "#111827",
-        line: "#e5e7eb",
-        mint: "#10b981",
-        night: "#050816"
+        bg: "hsl(var(--bg) / <alpha-value>)",
+        surface: "hsl(var(--surface-0) / <alpha-value>)",
+        "surface-soft": "hsl(var(--surface-1) / <alpha-value>)",
+        "surface-muted": "hsl(var(--surface-2) / <alpha-value>)",
+        "border-subtle": "hsl(var(--border-subtle) / <alpha-value>)",
+        "border-strong": "hsl(var(--border-strong) / <alpha-value>)",
+        text: "hsl(var(--text-primary) / <alpha-value>)",
+        "text-soft": "hsl(var(--text-secondary) / <alpha-value>)",
+        "text-muted": "hsl(var(--text-tertiary) / <alpha-value>)",
+        accent: "hsl(var(--accent) / <alpha-value>)",
+        "accent-strong": "hsl(var(--accent-strong) / <alpha-value>)",
+        "accent-soft": "hsl(var(--accent-soft) / <alpha-value>)",
+        success: "hsl(var(--success) / <alpha-value>)",
+        warning: "hsl(var(--warning) / <alpha-value>)",
+        danger: "hsl(var(--danger) / <alpha-value>)",
+        "success-soft": "hsl(var(--success-soft) / <alpha-value>)",
+        "success-border": "hsl(var(--success-border) / <alpha-value>)",
+        "warning-soft": "hsl(var(--warning-soft) / <alpha-value>)",
+        "warning-border": "hsl(var(--warning-border) / <alpha-value>)",
+        "danger-soft": "hsl(var(--danger-soft) / <alpha-value>)",
+        "danger-border": "hsl(var(--danger-border) / <alpha-value>)",
+      },
+      fontSize: {
+        "fluid-hero": "var(--step-3)",
+        "fluid-title": "var(--step-2)",
+        "fluid-subtitle": "var(--step-1)",
+        caption: "var(--step--1)",
       },
       boxShadow: {
-        soft: "0 16px 40px rgba(15, 23, 42, 0.08)"
-      }
-    }
+        soft: "var(--shadow-soft)",
+      },
+    },
   },
-  plugins: []
+  plugins: [],
 };
 
 export default config;
