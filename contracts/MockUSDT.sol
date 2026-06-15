@@ -2,8 +2,8 @@
 pragma solidity ^0.8.24;
 
 contract MockUSDT {
-    string public name = "Mock USDT";
-    string public symbol = "mUSDT";
+    string public name = "USDT";
+    string public symbol = "USDT";
     uint8 public constant decimals = 6;
     uint256 public totalSupply;
     address public owner;

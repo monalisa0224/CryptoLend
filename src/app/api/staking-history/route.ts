@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { getPrisma } from "@/lib/prisma";
 
-export async function GET() {
+export async function GET(request: Request) {
   const prisma = getPrisma();
+  const { searchParams } = new URL(request.url);
+  const wallet = searchParams.get("wallet");
+
   const history = await prisma.stakingTransaction.findMany({
+    where: wallet ? { walletAddress: wallet } : undefined,
     orderBy: { createdAt: "desc" },
     take: 20
   });
