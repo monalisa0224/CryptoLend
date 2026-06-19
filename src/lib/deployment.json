@@ -14,8 +14,8 @@
     "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
     "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720"
   ],
-  "mockUsdt": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-  "lendingPool": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
+  "mockUsdt": "0x9A676e781A523b5d0C0e43731313A708CB607508",
+  "lendingPool": "0x0B306BF915C4d645ff596e518fAf3F9669b97016",
   "constants": {
     "ethPriceUsdt": "100",
     "maxLtvBps": "7000",

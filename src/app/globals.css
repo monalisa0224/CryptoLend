@@ -17,12 +17,17 @@
   --text-tertiary: 215 16% 47%;
 
   /* Accents */
-  --accent: 222 78% 52%;
-  --accent-strong: 224 76% 44%;
-  --accent-soft: 221 88% 95%;
+  --accent: 193 94% 54%;
+  --accent-strong: 232 86% 58%;
+  --accent-soft: 223 100% 96%;
   --success: 158 64% 42%;
   --warning: 32 95% 44%;
   --danger: 0 72% 52%;
+
+  --beam-cyan: 192 97% 55%;
+  --beam-indigo: 248 88% 62%;
+  --beam-magenta: 285 91% 64%;
+  --beam-line-static: 220 60% 72%;
 
   /* Feedback surfaces */
   --success-soft: 150 60% 96%;
@@ -55,12 +60,17 @@
     --text-secondary: 214 15% 78%;
     --text-tertiary: 217 14% 66%;
 
-    --accent: 214 90% 63%;
-    --accent-strong: 210 92% 70%;
-    --accent-soft: 223 47% 18%;
+    --accent: 192 95% 64%;
+    --accent-strong: 233 88% 68%;
+    --accent-soft: 236 47% 18%;
     --success: 154 60% 52%;
     --warning: 38 94% 62%;
     --danger: 0 78% 67%;
+
+    --beam-cyan: 192 97% 55%;
+    --beam-indigo: 248 88% 62%;
+    --beam-magenta: 285 91% 64%;
+    --beam-line-static: 228 35% 54%;
 
     --success-soft: 154 34% 16%;
     --success-border: 154 30% 28%;
@@ -85,12 +95,17 @@
   --text-secondary: 215 20% 35%;
   --text-tertiary: 215 16% 47%;
 
-  --accent: 222 78% 52%;
-  --accent-strong: 224 76% 44%;
-  --accent-soft: 221 88% 95%;
+  --accent: 193 94% 54%;
+  --accent-strong: 232 86% 58%;
+  --accent-soft: 223 100% 96%;
   --success: 158 64% 42%;
   --warning: 32 95% 44%;
   --danger: 0 72% 52%;
+
+  --beam-cyan: 192 97% 55%;
+  --beam-indigo: 248 88% 62%;
+  --beam-magenta: 285 91% 64%;
+  --beam-line-static: 220 60% 72%;
 
   --success-soft: 150 60% 96%;
   --success-border: 151 50% 81%;
@@ -113,12 +128,17 @@
   --text-primary: 210 20% 95%;
   --text-secondary: 214 15% 78%;
   --text-tertiary: 217 14% 66%;
-  --accent: 214 90% 63%;
-  --accent-strong: 210 92% 70%;
-  --accent-soft: 223 47% 18%;
+  --accent: 192 95% 64%;
+  --accent-strong: 233 88% 68%;
+  --accent-soft: 236 47% 18%;
   --success: 154 60% 52%;
   --warning: 38 94% 62%;
   --danger: 0 78% 67%;
+
+  --beam-cyan: 192 97% 55%;
+  --beam-indigo: 248 88% 62%;
+  --beam-magenta: 285 91% 64%;
+  --beam-line-static: 228 35% 54%;
   --success-soft: 154 34% 16%;
   --success-border: 154 30% 28%;
   --warning-soft: 33 43% 16%;

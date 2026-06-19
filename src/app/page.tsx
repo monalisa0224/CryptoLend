@@ -32,6 +32,7 @@ import {
   MOCK_USDT_ABI,
   hasDeployment,
 } from "@/lib/contracts";
+import { BackgroundBeams } from "@/components/background-beams";
 
 type View = "home" | "lending" | "staking";
 type Theme = "light" | "dark";
@@ -497,17 +498,15 @@ export default function Home() {
   };
 
   useEffect(() => {
-    const savedTheme = localStorage.getItem("theme");
-    if (savedTheme === "light" || savedTheme === "dark") {
-      applyTheme(savedTheme);
+    // Read the current theme from the document (set by ThemeInitializer)
+    const currentTheme = document.documentElement.getAttribute("data-theme");
+    if (currentTheme === "light" || currentTheme === "dark") {
+      setTheme(currentTheme);
     } else {
-      const prefersDark = window.matchMedia(
-        "(prefers-color-scheme: dark)",
-      ).matches;
-      applyTheme(prefersDark ? "dark" : "light");
+      setTheme("light");
     }
     setMounted(true);
-  }, [applyTheme]);
+  }, []);
 
   useEffect(() => {
     refreshBorrowHistory().catch(() => undefined);
@@ -540,7 +539,9 @@ export default function Home() {
   };
 
   return (
-    <main className="min-h-screen bg-bg text-text">
+    <main className="relative isolate min-h-screen overflow-hidden bg-bg text-text">
+      <BackgroundBeams className="opacity-60" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,hsl(var(--accent-soft)/0.55),transparent_38%)]" />
       <header className="border-b border-border-subtle/80 bg-surface/90 backdrop-blur-lg">
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-4 md:px-6 md:py-5">
           <button
@@ -603,7 +604,7 @@ export default function Home() {
         </div>
       </header>
 
-      <section className="mx-auto w-full max-w-6xl px-4 py-6 md:px-6 md:py-8">
+      <section className="relative z-10 mx-auto w-full max-w-6xl px-4 py-6 md:px-6 md:py-8">
         {!deploymentReady && (
           <div className="fade-up mb-6 rounded-2xl border border-warning-border bg-warning-soft px-5 py-4 text-sm text-warning">
             Contracts are not deployed yet. Start Hardhat node and run{" "}
