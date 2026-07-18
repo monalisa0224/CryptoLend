@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { ThemeInitializer } from "@/components/theme-initializer";
+import { DefiProvider } from "@/components/defi-state";
+import { AppShell } from "@/components/app-shell";
 
 export const metadata: Metadata = {
   title: "CryptoLend",
@@ -16,7 +18,9 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body>
         <ThemeInitializer />
-        {children}
+        <DefiProvider>
+          <AppShell>{children}</AppShell>
+        </DefiProvider>
       </body>
     </html>
   );
