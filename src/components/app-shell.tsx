@@ -9,11 +9,14 @@ import {
   LayoutDashboard,
   LineChart,
   LogOut,
+  Moon,
   ShieldAlert,
+  Sun,
   Wallet,
 } from "lucide-react";
 import { GlobalAlerts } from "@/components/defi-views";
 import { playClickSound, shortAddress, useDefi } from "@/components/defi-state";
+import { AnimatedBackground } from "@/components/animated-background";
 
 type NavItem = { label: string; href: string; desc: string };
 type NavGroup = { label: string; icon: ComponentType<{ className?: string }>; items: NavItem[] };
@@ -46,7 +49,7 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-function NavDropdown({ group, pathname }: { group: NavGroup; pathname: string }) {
+function NavDropdown({ group, pathname, isDarkMode }: { group: NavGroup; pathname: string; isDarkMode: boolean }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const isActive = group.items.some((item) => pathname === item.href);
@@ -68,7 +71,13 @@ function NavDropdown({ group, pathname }: { group: NavGroup; pathname: string })
           setOpen((current) => !current);
         }}
         className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-colors ${
-          isActive ? "bg-slate-100 text-slate-900" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+          isDarkMode
+            ? isActive
+              ? "bg-slate-800 text-slate-100"
+              : "text-slate-300 hover:bg-slate-800 hover:text-slate-100"
+            : isActive
+              ? "bg-slate-100 text-slate-900"
+              : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
         }`}
       >
         <group.icon className="h-4 w-4" />
@@ -77,7 +86,7 @@ function NavDropdown({ group, pathname }: { group: NavGroup; pathname: string })
       </button>
 
       {open && (
-        <div className="absolute left-0 top-[calc(100%+8px)] z-50 w-60 overflow-hidden rounded-2xl border border-slate-200 bg-white py-1 shadow-2xl shadow-slate-900/10">
+        <div className={`absolute left-0 top-[calc(100%+8px)] z-50 w-60 overflow-hidden rounded-2xl py-1 shadow-2xl ${isDarkMode ? "border border-slate-700 bg-slate-900 shadow-black/50" : "border border-slate-200 bg-white shadow-slate-900/10"}`}>
           {group.items.map((item) => {
             const active = pathname === item.href;
             return (
@@ -88,10 +97,10 @@ function NavDropdown({ group, pathname }: { group: NavGroup; pathname: string })
                   playClickSound();
                   setOpen(false);
                 }}
-                className={`block px-4 py-3 transition-colors ${active ? "bg-slate-100" : "hover:bg-slate-50"}`}
+                className={`block px-4 py-3 transition-colors ${isDarkMode ? active ? "bg-slate-800" : "hover:bg-slate-800/70" : active ? "bg-slate-100" : "hover:bg-slate-50"}`}
               >
-                <p className="text-sm font-semibold text-slate-900">{item.label}</p>
-                <p className="text-sm text-slate-500">{item.desc}</p>
+                <p className={`text-sm font-semibold ${isDarkMode ? "text-slate-100" : "text-slate-900"}`}>{item.label}</p>
+                <p className={`text-sm ${isDarkMode ? "text-slate-300" : "text-slate-500"}`}>{item.desc}</p>
               </Link>
             );
           })}
@@ -103,32 +112,43 @@ function NavDropdown({ group, pathname }: { group: NavGroup; pathname: string })
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { account, connectWallet, disconnectWallet } = useDefi();
+  const { account, connectWallet, disconnectWallet, isDarkMode, setIsDarkMode } = useDefi();
 
   return (
-    <main className="flex min-h-screen flex-col bg-white text-slate-900">
-      <header className="border-b border-slate-200">
+    <main className={`relative flex min-h-screen flex-col ${isDarkMode ? "text-slate-100" : "text-slate-900"}`}>
+      <AnimatedBackground isDarkMode={isDarkMode} />
+      <header className={`relative z-10 border-b ${isDarkMode ? "border-slate-700 bg-slate-950/80" : "border-slate-200 bg-white/85"} backdrop-blur`}>
         <div className="mx-auto flex max-w-[1380px] items-center gap-6 px-8 py-4">
           <Link href="/" onClick={() => playClickSound()} className="flex items-center gap-3">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#0b0b23] text-white">
               <Coins className="h-6 w-6" />
             </div>
             <div>
-              <h1 className="text-2xl font-semibold leading-tight">CryptoLend</h1>
-              <p className="text-sm text-slate-500">Decentralized Lending & Staking</p>
+              <h1 className={`text-2xl font-semibold leading-tight ${isDarkMode ? "text-slate-100" : "text-slate-900"}`}>CryptoLend</h1>
+              <p className={`text-sm ${isDarkMode ? "text-slate-300" : "text-slate-500"}`}>Decentralized Lending & Staking</p>
             </div>
           </Link>
 
           <nav className="hidden items-center gap-1 md:flex">
             {NAV_GROUPS.map((group) => (
-              <NavDropdown key={group.label} group={group} pathname={pathname} />
+              <NavDropdown key={group.label} group={group} pathname={pathname} isDarkMode={isDarkMode} />
             ))}
           </nav>
 
           <div className="ml-auto">
+            <button
+              onClick={() => {
+                playClickSound();
+                setIsDarkMode((current) => !current);
+              }}
+              className={`mr-3 inline-flex h-11 w-11 items-center justify-center rounded-xl border transition-colors ${isDarkMode ? "border-slate-700 bg-slate-900 text-slate-100 hover:bg-slate-800" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"}`}
+              aria-label={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
+            >
+              {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+            </button>
             {account ? (
-              <div className="flex items-center gap-3 rounded-xl border border-slate-200 px-4 py-3">
-                <span className="font-semibold text-slate-800">{shortAddress(account)}</span>
+              <div className={`inline-flex items-center gap-3 rounded-xl border px-4 py-3 ${isDarkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-200 bg-white text-slate-800"}`}>
+                <span className="font-semibold">{shortAddress(account)}</span>
                 <button
                   onClick={() => {
                     playClickSound();
@@ -156,13 +176,13 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </header>
 
-      <section className="mx-auto w-full max-w-[1380px] flex-1 px-8 py-8">
+      <section className="relative z-10 mx-auto w-full max-w-[1380px] flex-1 px-8 py-8">
         <GlobalAlerts />
         {children}
       </section>
 
-      <footer className="border-t border-slate-200 py-8">
-        <p className="text-center text-sm text-slate-500">CryptoLend - Secure Decentralized Finance Platform</p>
+      <footer className={`relative z-10 border-t py-8 ${isDarkMode ? "border-slate-700 bg-slate-950/70" : "border-slate-200 bg-white/70"} backdrop-blur`}>
+        <p className={`text-center text-sm ${isDarkMode ? "text-slate-300" : "text-slate-500"}`}>CryptoLend - Secure Decentralized Finance Platform</p>
       </footer>
     </main>
   );

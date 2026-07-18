@@ -805,6 +805,21 @@ export function DefiProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    const savedTheme = localStorage.getItem("theme");
+    const theme =
+      savedTheme === "light" || savedTheme === "dark"
+        ? savedTheme
+        : document.documentElement.getAttribute("data-theme") || "light";
+    setIsDarkMode(theme === "dark");
+  }, []);
+
+  useEffect(() => {
+    const theme = isDarkMode ? "dark" : "light";
+    document.documentElement.setAttribute("data-theme", theme);
+    localStorage.setItem("theme", theme);
+  }, [isDarkMode]);
+
+  useEffect(() => {
     refreshPrices().catch(() => undefined);
     const priceTimer = window.setInterval(() => {
       refreshPrices().catch(() => undefined);
