@@ -82,6 +82,7 @@ export function HomeRouteView() {
 
 export function LendingRouteView() {
   const state = useDefi();
+  if (!state.account) return <WalletConnectionPrompt title="Connect Your Wallet" message="Please connect your wallet to access lending services" icon={<DollarSign className="h-14 w-14 text-[#0b0b23]" />} />;
   const healthFactor = state.healthFactor > 0 ? state.healthFactor.toFixed(2) : "-";
   return (
     <div className="space-y-6">
@@ -131,6 +132,7 @@ export function LendingRouteView() {
 
 export function StakingRouteView() {
   const state = useDefi();
+  if (!state.account) return <WalletConnectionPrompt title="Connect Your Wallet" message="Please connect your wallet to access staking services" icon={<TrendingUp className="h-14 w-14 text-[#0b0b23]" />} />;
   return (
     <div className="space-y-6">
       <SectionTitle title="Stake USDT" subtitle="Supply liquidity to the protocol and claim rewards." />
@@ -164,7 +166,8 @@ export function StakingRouteView() {
 }
 
 export function DashboardProtocolView() {
-  const { poolLiquidity, totalBorrowed } = useDefi();
+  const { account, poolLiquidity, totalBorrowed } = useDefi();
+  if (!account) return <WalletConnectionPrompt title="Connect Your Wallet" message="Please connect your wallet to access protocol dashboard" icon={<Database className="h-14 w-14 text-[#0b0b23]" />} />;
   const liquidity = toNumber(poolLiquidity);
   const borrowed = toNumber(totalBorrowed);
   const available = Math.max(liquidity - borrowed, 0);
@@ -226,6 +229,7 @@ export function DashboardProtocolView() {
 
 export function DashboardTransactionsView() {
   const state = useDefi();
+  if (!state.account) return <WalletConnectionPrompt title="Connect Your Wallet" message="Please connect your wallet to access transaction dashboard" icon={<Wallet className="h-14 w-14 text-[#0b0b23]" />} />;
   const totalDebt = toNumber(state.position.borrowed) + toNumber(state.position.accruedInterest);
   const collateralUsd = toNumber(state.position.collateral) * 100;
   const healthFactor = totalDebt > 0 ? collateralUsd / totalDebt : 0;
@@ -291,7 +295,8 @@ export function DashboardTransactionsView() {
 }
 
 export function DashboardHistoryView() {
-  const { borrowHistory, repayHistory, stakingHistory } = useDefi();
+  const { account, borrowHistory, repayHistory, stakingHistory } = useDefi();
+  if (!account) return <WalletConnectionPrompt title="Connect Your Wallet" message="Please connect your wallet to access history dashboard" icon={<Database className="h-14 w-14 text-[#0b0b23]" />} />;
   const txRows = [
     ...borrowHistory.map((item) => ({ id: `borrow-${item.id}`, type: "Borrow", sign: "+", amount: `${toNumber(item.borrowAmount).toFixed(2)} USDT`, amountColor: "text-orange-600", detail: `Collateral ${item.collateralAmount} ${item.collateralSymbol || "ETH"} - Borrowed ${item.borrowAmount} USDT`, txHash: item.txHash, createdAt: item.createdAt })),
     ...repayHistory.map((item) => ({ id: `repay-${item.id}`, type: "Repay", sign: "-", amount: `${toNumber(item.amount).toFixed(2)} USDT`, amountColor: "text-blue-600", detail: `Paid ${item.amount} USDT - Interest ${item.interestPaid} USDT - Principal ${item.principalPaid} USDT`, txHash: item.txHash, createdAt: item.createdAt })),
@@ -408,6 +413,16 @@ function StatCard({ label, value, sub, valueClass }: { label: string; value: str
 
 function HistoryStat({ label, value, color }: { label: string; value: string; color: string }) {
   return <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4"><p className="text-sm text-slate-500">{label}</p><p className={`mt-1 text-3xl font-semibold ${color}`}>{value}</p></div>;
+}
+
+function WalletConnectionPrompt({ title, message, icon }: { title: string; message: string; icon: ReactNode }) {
+  return (
+    <div className="flex min-h-[58vh] flex-col items-center justify-center text-center">
+      <div className="mb-6 flex h-32 w-32 items-center justify-center rounded-full bg-slate-100">{icon}</div>
+      <h2 className="mb-3 text-4xl font-semibold text-slate-900">{title}</h2>
+      <p className="text-xl text-slate-500">{message}</p>
+    </div>
+  );
 }
 
 export function GlobalAlerts() {
