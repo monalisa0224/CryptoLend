@@ -169,7 +169,10 @@ body {
     hsl(var(--bg));
   font-family: "Sora", "Manrope", "Segoe UI", sans-serif;
   font-size: var(--step-0);
-  line-height: 1.6;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
   transition:
     background-color 220ms ease,
     color 220ms ease;

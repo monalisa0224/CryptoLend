@@ -118,14 +118,14 @@ export function AppShell({ children }: { children: ReactNode }) {
     <main className={`relative flex min-h-screen flex-col ${isDarkMode ? "text-slate-100" : "text-slate-900"}`}>
       <AnimatedBackground isDarkMode={isDarkMode} />
       <header className={`relative z-50 border-b ${isDarkMode ? "border-slate-700 bg-slate-950/80" : "border-slate-200 bg-white/85"} backdrop-blur`}>
-        <div className="mx-auto flex max-w-[1380px] items-center gap-6 px-8 py-4">
+        <div className="mx-auto flex max-w-[1280px] items-center gap-4 px-5 py-4 md:gap-6 md:px-8">
           <Link href="/" onClick={() => playClickSound()} className="flex items-center gap-3">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#0b0b23] text-white">
               <Coins className="h-6 w-6" />
             </div>
             <div>
-              <h1 className={`text-2xl font-semibold leading-tight ${isDarkMode ? "text-slate-100" : "text-slate-900"}`}>CryptoLend</h1>
-              <p className={`text-sm ${isDarkMode ? "text-slate-300" : "text-slate-500"}`}>Decentralized Lending & Staking</p>
+              <h1 className={`text-[1.7rem] font-semibold leading-tight tracking-tight ${isDarkMode ? "text-slate-100" : "text-slate-900"}`}>CryptoLend</h1>
+              <p className={`text-sm leading-5 ${isDarkMode ? "text-slate-300" : "text-slate-500"}`}>Decentralized Lending & Staking</p>
             </div>
           </Link>
 
@@ -176,7 +176,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </header>
 
-      <section className="relative z-0 mx-auto w-full max-w-[1380px] flex-1 px-8 py-8">
+      <section className="relative z-0 mx-auto w-full max-w-[1280px] flex-1 px-5 py-8 md:px-8 md:py-10">
         <GlobalAlerts />
         {children}
       </section>
