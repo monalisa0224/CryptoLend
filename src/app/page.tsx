@@ -75,6 +75,7 @@ type RepayHistory = {
 };
 
 const HARDHAT_CHAIN_ID = 31337;
+const HARDHAT_CHAIN_HEX = "0x7a69";
 const LOCAL_RPC_URL = "http://127.0.0.1:8545";
 const INTEREST_RATE = 4;
 const STAKING_APY = 12;
@@ -216,6 +217,39 @@ export default function Home() {
     return new BrowserProvider(window.ethereum);
   }, []);
 
+  const ensureHardhatNetwork = useCallback(async (provider: BrowserProvider) => {
+    const network = await provider.getNetwork();
+    if (Number(network.chainId) === HARDHAT_CHAIN_ID) return;
+    if (!window.ethereum) throw new Error("MetaMask is not available. Please install MetaMask first.");
+
+    try {
+      await window.ethereum.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: HARDHAT_CHAIN_HEX }]
+      });
+    } catch (caught) {
+      const switchError = caught as { code?: number };
+      if (switchError.code !== 4902) {
+        throw caught;
+      }
+
+      await window.ethereum.request({
+        method: "wallet_addEthereumChain",
+        params: [{ chainId: HARDHAT_CHAIN_HEX, chainName: "Hardhat Local", nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 }, rpcUrls: [LOCAL_RPC_URL], blockExplorerUrls: [] }]
+      });
+      await window.ethereum.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: HARDHAT_CHAIN_HEX }]
+      });
+    }
+
+    const refreshedProvider = new BrowserProvider(window.ethereum);
+    const switchedNetwork = await refreshedProvider.getNetwork();
+    if (Number(switchedNetwork.chainId) !== HARDHAT_CHAIN_ID) {
+      throw new Error("Please switch MetaMask to Hardhat Local (Chain ID 31337).");
+    }
+  }, []);
+
   const refreshPrices = useCallback(async () => {
     try {
       const response = await fetch("/api/prices", { cache: "no-store" });
@@ -281,6 +315,10 @@ export default function Home() {
     async (walletAddress = account) => {
       if (!walletAddress || !deploymentReady) return;
       const provider = await getBrowserProvider();
+      const network = await provider.getNetwork();
+      if (Number(network.chainId) !== HARDHAT_CHAIN_ID) {
+        throw new Error("Please switch MetaMask to Hardhat Local (Chain ID 31337).");
+      }
       const usdt = new Contract(DEPLOYMENT.mockUsdt, MOCK_USDT_ABI, provider);
       const pool = new Contract(DEPLOYMENT.lendingPool, LENDING_POOL_ABI, provider);
       const [eth, usdtRaw, allowanceRaw, loan, accruedInterestRaw, totalDebtRaw, stakedRaw, pendingRaw] = await Promise.all([
@@ -335,13 +373,7 @@ export default function Home() {
       setStatus("Connecting MetaMask...");
       const provider = await getBrowserProvider();
       await provider.send("eth_requestAccounts", []);
-      const network = await provider.getNetwork();
-      if (Number(network.chainId) !== HARDHAT_CHAIN_ID && window.ethereum) {
-        await window.ethereum.request({
-          method: "wallet_addEthereumChain",
-          params: [{ chainId: "0x7a69", chainName: "Hardhat Local", nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 }, rpcUrls: [LOCAL_RPC_URL], blockExplorerUrls: [] }]
-        });
-      }
+      await ensureHardhatNetwork(provider);
       const signer = await provider.getSigner();
       const address = await signer.getAddress();
       setAccount(address);
@@ -353,6 +385,43 @@ export default function Home() {
     } catch (caught) {
       showError(caught instanceof Error ? caught.message : "Failed to connect wallet.");
       setStatus("");
+    }
+  };
+
+  const mintMockTokens = async () => {
+    try {
+      setError("");
+      setStatus("");
+      setIsBusy(true);
+      requireWallet();
+      const btcAsset = SUPPORTED_ASSETS.find((asset) => asset.id === "BTC");
+      const solAsset = SUPPORTED_ASSETS.find((asset) => asset.id === "SOL");
+      if (!btcAsset?.address || !solAsset?.address) {
+        throw new Error("Mock token addresses are missing. Redeploy contracts first.");
+      }
+
+      const provider = await getBrowserProvider();
+      await ensureHardhatNetwork(provider);
+      const signer = await provider.getSigner();
+      const address = await signer.getAddress();
+
+      const usdt = new Contract(DEPLOYMENT.mockUsdt, MOCK_USDT_ABI, signer);
+      const btc = new Contract(btcAsset.address, MOCK_USDT_ABI, signer);
+      const sol = new Contract(solAsset.address, MOCK_USDT_ABI, signer);
+
+      setStatus("Minting demo USDT...");
+      await (await usdt.mint(address, parseUnits("1000", 6))).wait();
+      setStatus("Minting demo BTC...");
+      await (await btc.mint(address, parseUnits("0.1", btcAsset.decimals))).wait();
+      setStatus("Minting demo SOL...");
+      await (await sol.mint(address, parseUnits("10", solAsset.decimals))).wait();
+
+      setStatus("Mock tokens minted to your wallet.");
+      await refreshBalances(address);
+    } catch (caught) {
+      showError(caught instanceof Error ? caught.message : "Mock token mint failed.");
+    } finally {
+      setIsBusy(false);
     }
   };
 
@@ -721,9 +790,26 @@ export default function Home() {
         disconnectWallet();
       }
     };
+    const handleChainChanged = (chainId: unknown) => {
+      if (typeof chainId !== "string") return;
+      if (chainId.toLowerCase() !== HARDHAT_CHAIN_HEX) {
+        showError("Please switch MetaMask back to Hardhat Local (Chain ID 31337).");
+        disconnectWallet();
+        return;
+      }
+      if (!account) return;
+      refreshBalances(account).catch(() => undefined);
+      refreshBorrowHistory(account).catch(() => undefined);
+      refreshRepayHistory(account).catch(() => undefined);
+      refreshStakingHistory(account).catch(() => undefined);
+    };
     window.ethereum.on?.("accountsChanged", handleAccountsChanged);
-    return () => window.ethereum?.removeListener?.("accountsChanged", handleAccountsChanged);
-  }, [refreshBalances, refreshBorrowHistory, refreshRepayHistory, refreshStakingHistory]);
+    window.ethereum.on?.("chainChanged", handleChainChanged);
+    return () => {
+      window.ethereum?.removeListener?.("accountsChanged", handleAccountsChanged);
+      window.ethereum?.removeListener?.("chainChanged", handleChainChanged);
+    };
+  }, [account, refreshBalances, refreshBorrowHistory, refreshRepayHistory, refreshStakingHistory, showError]);
 
   useEffect(() => {
     if (!status && !error) return;
@@ -780,6 +866,9 @@ export default function Home() {
             </button>
             {account ? (
               <div className="flex items-center gap-3 rounded-lg border border-line bg-slate-50 px-4 py-3 transition-colors dark:border-slate-700 dark:bg-slate-900">
+                <button onClick={() => { playClickSound(); mintMockTokens(); }} disabled={isBusy} className="rounded-lg border border-line bg-white px-3 py-2 text-xs font-semibold text-ink transition hover:border-slate-900 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-800 dark:text-white">
+                  Get Mock Tokens
+                </button>
                 <span className="h-2.5 w-2.5 rounded-full bg-mint" />
                 <span className="font-medium text-slate-700 dark:text-slate-200">{shortAddress(account)}</span>
                 <button onClick={() => { playClickSound(); disconnectWallet(); }} className="text-rose-500 transition hover:scale-110" aria-label="Disconnect wallet"><LogOut className="h-5 w-5" /></button>

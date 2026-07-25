@@ -6,7 +6,6 @@ contract MockToken {
     string public symbol;
     uint8 public immutable decimals;
     uint256 public totalSupply;
-    address public owner;
 
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
@@ -14,19 +13,13 @@ contract MockToken {
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Not owner");
-        _;
-    }
-
     constructor(string memory tokenName, string memory tokenSymbol, uint8 tokenDecimals) {
         name = tokenName;
         symbol = tokenSymbol;
         decimals = tokenDecimals;
-        owner = msg.sender;
     }
 
-    function mint(address to, uint256 amount) external onlyOwner {
+    function mint(address to, uint256 amount) external {
         require(to != address(0), "Zero address");
         totalSupply += amount;
         balanceOf[to] += amount;

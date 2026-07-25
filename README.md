@@ -33,6 +33,7 @@ CoinGecko prices are used for frontend display. The contract uses deterministic 
 - Account 1 is the deployer, treasury, and company liquidity provider.
 - Demo user accounts can borrow or stake.
 - Demo users receive `10000 USDT`, `1 BTC`, and `100 Solana` during deployment.
+- Connected users can mint extra demo balances from the **Get Mock Tokens** button in the app header.
 - The LendingPool is pre-funded with ETH and USDT liquidity.
 - Borrowing moves collateral from the user wallet to the LendingPool and moves USDT from the LendingPool to the user wallet.
 - Borrowed USDT accrues demo interest at `4% APY`.
@@ -90,6 +91,7 @@ Import demo accounts from the `npm.cmd run hardhat:node` terminal output. Import
 - `mockSol` as symbol `SOL`, decimals `9`
 
 If Hardhat node is restarted, redeploy and re-import the latest token addresses.
+The app now requests a proper chain switch to `31337` when connecting, and automatically disconnects if you switch away from Hardhat Local.
 
 ## Company Liquidity
 

@@ -6,7 +6,6 @@ contract MockUSDT {
     string public symbol = "USDT";
     uint8 public constant decimals = 6;
     uint256 public totalSupply;
-    address public owner;
 
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
@@ -14,16 +13,7 @@ contract MockUSDT {
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Not owner");
-        _;
-    }
-
-    constructor() {
-        owner = msg.sender;
-    }
-
-    function mint(address to, uint256 amount) external onlyOwner {
+    function mint(address to, uint256 amount) external {
         require(to != address(0), "Zero address");
         totalSupply += amount;
         balanceOf[to] += amount;
