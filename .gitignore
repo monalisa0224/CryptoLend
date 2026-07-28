@@ -12,3 +12,8 @@ typechain-types
 *.db-journal
 *.log
 prisma/dev.db
+
+# Package manager lock files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml

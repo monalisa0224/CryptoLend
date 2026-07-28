@@ -1,0 +1,199 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
+import {
+  ChevronDown,
+  Coins,
+  LayoutDashboard,
+  LineChart,
+  LogOut,
+  Moon,
+  ShieldAlert,
+  Sun,
+  Wallet,
+} from "lucide-react";
+import { GlobalAlerts } from "@/components/defi-views";
+import { playClickSound, shortAddress, useDefi } from "@/components/defi-state";
+import { AnimatedBackground } from "@/components/animated-background";
+
+type NavItem = { label: string; href: string; desc: string };
+type NavGroup = { label: string; icon: ComponentType<{ className?: string }>; items: NavItem[] };
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    label: "Dashboard",
+    icon: LayoutDashboard,
+    items: [
+      { label: "Protocol", href: "/dashboard/protocol", desc: "Lending Pool utilisation" },
+      { label: "Transactions", href: "/dashboard/transactions", desc: "On-chain activity" },
+      { label: "History", href: "/dashboard/history", desc: "Chronological record" },
+    ],
+  },
+  {
+    label: "Markets",
+    icon: LineChart,
+    items: [
+      { label: "Lending", href: "/lend", desc: "Borrow USDT against crypto" },
+      { label: "Staking", href: "/stake", desc: "Earn yield on USDT" },
+    ],
+  },
+  {
+    label: "Admin",
+    icon: ShieldAlert,
+    items: [
+      { label: "Liquidity Pool Management", href: "/admin/liquidity", desc: "Manage pool funds & parameters" },
+      { label: "Trigger Liquidation", href: "/admin/liquidation", desc: "Liquidate at-risk collateral" },
+    ],
+  },
+];
+
+function NavDropdown({ group, pathname, isDarkMode }: { group: NavGroup; pathname: string; isDarkMode: boolean }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const isActive = group.items.some((item) => pathname === item.href);
+
+  useEffect(() => {
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (!ref.current) return;
+      if (!ref.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, []);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => {
+          playClickSound();
+          setOpen((current) => !current);
+        }}
+        className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-colors ${
+          isDarkMode
+            ? isActive
+              ? "bg-slate-800 text-slate-100"
+              : "text-slate-300 hover:bg-slate-800 hover:text-slate-100"
+            : isActive
+              ? "bg-slate-100 text-slate-900"
+              : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+        }`}
+      >
+        <group.icon className="h-4 w-4" />
+        {group.label}
+        <ChevronDown className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && (
+        <div className={`absolute left-0 top-[calc(100%+8px)] z-50 w-60 overflow-hidden rounded-2xl py-1 shadow-2xl ${isDarkMode ? "border border-slate-700 bg-slate-900 shadow-black/50" : "border border-slate-200 bg-white shadow-slate-900/10"}`}>
+          {group.items.map((item) => {
+            const active = pathname === item.href;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={() => {
+                  playClickSound();
+                  setOpen(false);
+                }}
+                className={`block px-4 py-3 transition-colors ${isDarkMode ? active ? "bg-slate-800" : "hover:bg-slate-800/70" : active ? "bg-slate-100" : "hover:bg-slate-50"}`}
+              >
+                <p className={`text-sm font-semibold ${isDarkMode ? "text-slate-100" : "text-slate-900"}`}>{item.label}</p>
+                <p className={`text-sm ${isDarkMode ? "text-slate-300" : "text-slate-500"}`}>{item.desc}</p>
+              </Link>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function AppShell({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const { account, connectWallet, disconnectWallet, isBusy, isDarkMode, mintMockTokens, setIsDarkMode } = useDefi();
+
+  return (
+    <main className={`relative flex min-h-screen flex-col ${isDarkMode ? "text-slate-100" : "text-slate-900"}`}>
+      <AnimatedBackground isDarkMode={isDarkMode} />
+      <header className={`relative z-50 border-b ${isDarkMode ? "border-slate-700 bg-slate-950/80" : "border-slate-200 bg-white/85"} backdrop-blur`}>
+        <div className="mx-auto flex max-w-[1280px] items-center gap-4 px-5 py-4 md:gap-6 md:px-8">
+          <Link href="/" onClick={() => playClickSound()} className="flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#0b0b23] text-white">
+              <Coins className="h-6 w-6" />
+            </div>
+            <div>
+              <h1 className={`text-[1.7rem] font-semibold leading-tight tracking-tight ${isDarkMode ? "text-slate-100" : "text-slate-900"}`}>CryptoLend</h1>
+              <p className={`text-sm leading-5 ${isDarkMode ? "text-slate-300" : "text-slate-500"}`}>Decentralized Lending & Staking</p>
+            </div>
+          </Link>
+
+          <nav className="hidden items-center gap-1 md:flex">
+            {NAV_GROUPS.map((group) => (
+              <NavDropdown key={group.label} group={group} pathname={pathname} isDarkMode={isDarkMode} />
+            ))}
+          </nav>
+
+          <div className="ml-auto">
+            <button
+              onClick={() => {
+                playClickSound();
+                setIsDarkMode((current) => !current);
+              }}
+              className={`mr-3 inline-flex h-11 w-11 items-center justify-center rounded-xl border transition-colors ${isDarkMode ? "border-slate-700 bg-slate-900 text-slate-100 hover:bg-slate-800" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-100"}`}
+              aria-label={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
+            >
+              {isDarkMode ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+            </button>
+            {account ? (
+              <div className={`inline-flex items-center gap-3 rounded-xl border px-4 py-3 ${isDarkMode ? "border-slate-700 bg-slate-900 text-slate-100" : "border-slate-200 bg-white text-slate-800"}`}>
+                <button
+                  onClick={() => {
+                    playClickSound();
+                    void mintMockTokens();
+                  }}
+                  disabled={isBusy}
+                  className={`rounded-lg border px-3 py-2 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${isDarkMode ? "border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700" : "border-slate-300 bg-slate-50 text-slate-800 hover:bg-slate-100"}`}
+                >
+                  Get Mock Tokens
+                </button>
+                <span className="font-semibold">{shortAddress(account)}</span>
+                <button
+                  onClick={() => {
+                    playClickSound();
+                    disconnectWallet();
+                  }}
+                  className="text-rose-500 transition-colors hover:text-rose-700"
+                  aria-label="Disconnect wallet"
+                >
+                  <LogOut className="h-5 w-5" />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => {
+                  playClickSound();
+                  void connectWallet();
+                }}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#0b0b23] px-6 py-3 text-base font-semibold text-white transition-colors hover:bg-[#1b1b3f]"
+              >
+                <Wallet className="h-5 w-5" />
+                Connect Wallet
+              </button>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <section className="relative z-0 mx-auto w-full max-w-[1280px] flex-1 px-5 py-8 md:px-8 md:py-10">
+        <GlobalAlerts />
+        {children}
+      </section>
+
+      <footer className={`relative z-10 border-t py-8 ${isDarkMode ? "border-slate-700 bg-slate-950/70" : "border-slate-200 bg-white/70"} backdrop-blur`}>
+        <p className={`text-center text-sm ${isDarkMode ? "text-slate-300" : "text-slate-500"}`}>CryptoLend - Secure Decentralized Finance Platform</p>
+      </footer>
+    </main>
+  );
+}

@@ -39,6 +39,7 @@ export const MOCK_USDT_ABI = [
   "function decimals() view returns (uint8)",
   "function balanceOf(address account) view returns (uint256)",
   "function allowance(address owner, address spender) view returns (uint256)",
+  "function mint(address to, uint256 amount)",
   "function approve(address spender, uint256 amount) returns (bool)",
   "function transfer(address to, uint256 amount) returns (bool)"
 ] as const;
