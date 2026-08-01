@@ -1,5 +1,5 @@
-import { StakingRouteView } from "@/components/defi-views";
+import { NewStakingView } from "@/components/staking-view";
 
 export default function StakePage() {
-  return <StakingRouteView />;
+  return <NewStakingView />;
 }

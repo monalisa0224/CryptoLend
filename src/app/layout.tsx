@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { Toaster } from "sonner";
 import { ThemeInitializer } from "@/components/theme-initializer";
 import { DefiProvider } from "@/components/defi-state";
 import { AppShell } from "@/components/app-shell";
@@ -17,6 +18,7 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body>
+        <Toaster position="top-right" richColors />
         <ThemeInitializer />
         <DefiProvider>
           <AppShell>{children}</AppShell>
