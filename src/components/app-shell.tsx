@@ -112,7 +112,8 @@ function NavDropdown({ group, pathname, isDarkMode }: { group: NavGroup; pathnam
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { account, connectWallet, disconnectWallet, isBusy, isDarkMode, mintMockTokens, setIsDarkMode } = useDefi();
+  const { account, connectWallet, disconnectWallet, isBusy, isDarkMode, isTreasury, mintMockTokens, setIsDarkMode } = useDefi();
+  const visibleNavGroups = NAV_GROUPS.filter((group) => group.label !== "Admin" || isTreasury);
 
   return (
     <main className={`relative flex min-h-screen flex-col ${isDarkMode ? "text-slate-100" : "text-slate-900"}`}>
@@ -130,7 +131,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </Link>
 
           <nav className="hidden items-center gap-1 md:flex">
-            {NAV_GROUPS.map((group) => (
+            {visibleNavGroups.map((group) => (
               <NavDropdown key={group.label} group={group} pathname={pathname} isDarkMode={isDarkMode} />
             ))}
           </nav>

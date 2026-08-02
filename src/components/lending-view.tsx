@@ -32,16 +32,21 @@ function SolIcon() {
   );
 }
 
-const COLLATERALS = [
-  { id: "ETH", name: "Ethereum", symbol: "ETH", price: 3200, ltv: 75, Icon: EthIcon },
-  { id: "BTC", name: "Bitcoin", symbol: "BTC", price: 65000, ltv: 70, Icon: BtcIcon },
-  { id: "SOL", name: "Solana", symbol: "SOL", price: 71.77, ltv: 60, Icon: SolIcon },
-];
+const COLLATERAL_ICONS = {
+  ETH: EthIcon,
+  BTC: BtcIcon,
+  SOL: SolIcon,
+};
+
+function formatUsd(value: number) {
+  if (value <= 0) return "-";
+  return `$${value.toLocaleString(undefined, { maximumFractionDigits: value >= 1 ? 2 : 6 })}`;
+}
 
 function healthColor(hf: number) {
-  if (hf > 1.5) return "text-green-500";
-  if (hf > 1.2) return "text-yellow-500";
-  return "text-red-500";
+  if (hf <= 1) return "text-red-500";
+  if (hf <= 1.2) return "text-yellow-500";
+  return "text-green-500";
 }
 
 export function NewLendingView() {
@@ -50,16 +55,19 @@ export function NewLendingView() {
 
   const [repayInput, setRepayInput] = useState("");
 
-  const selectedCollateralData = COLLATERALS.find((c) => c.id === state.selectedAsset.id);
   const collateralNum = toNumber(state.collateralAmount);
   const borrowNum = toNumber(state.borrowAmount);
-  const collateralUsdValue = collateralNum * (selectedCollateralData?.price || 0);
-  const maxLoanValue = collateralUsdValue * ((selectedCollateralData?.ltv || 75) / 100);
+  const collateralUsdValue = collateralNum * state.selectedLivePrice;
+  const maxLoanValue = state.safeMaxBorrow;
+  const selectedLtvPercent = state.selectedAsset.ltvBps / 100;
+  const selectedLiquidationThreshold = state.selectedAsset.liquidationThresholdBps / 10000;
+  const liquidationPrice = selectedLiquidationThreshold > 0 ? borrowNum / ((collateralNum || 1) * selectedLiquidationThreshold) : 0;
 
   const totalDebt = toNumber(state.position.borrowed) + toNumber(state.position.accruedInterest);
+  const hasActiveBorrowing = toNumber(state.position.borrowed) > 0 || toNumber(state.position.totalDebt) > 0;
   const repayAmt = toNumber(repayInput);
   const remainingDebt = Math.max(0, totalDebt - repayAmt);
-  const newHealthFactor = remainingDebt > 0 ? (toNumber(state.position.collateral) * 100) / remainingDebt : 0;
+  const newHealthFactor = remainingDebt > 0 ? (toNumber(state.position.collateral) * state.selectedLivePrice) / remainingDebt : 0;
 
   const handleBorrowClick = () => {
     playClickSound();
@@ -69,7 +77,7 @@ export function NewLendingView() {
   const handleRepayClick = () => {
     state.setRepayAmount(repayInput);
     playClickSound();
-    void state.repayLoan();
+    void state.repayPosition(repayInput);
   };
 
   if (!account) {
@@ -99,35 +107,41 @@ export function NewLendingView() {
           <div className="bg-card rounded-xl border border-border p-6">
             <h3 className="text-base mb-4">Select Collateral</h3>
             <div className="grid grid-cols-2 gap-4">
-              {COLLATERALS.map((collateral) => (
-                <div
-                  key={collateral.id}
-                  onClick={() => { playClickSound(); state.setSelectedAssetId(collateral.id); }}
-                  className={`p-4 rounded-xl border cursor-pointer transition-all ${
-                    state.selectedAsset.id === collateral.id
-                      ? "border-primary bg-primary/5 shadow-lg"
-                      : "border-border hover:border-primary/50 bg-muted/30"
-                  }`}
-                >
-                  <div className="flex items-center gap-3 mb-3">
-                    <collateral.Icon />
-                    <div>
-                      <p className="font-medium">{collateral.symbol}</p>
-                      <p className="text-xs text-muted-foreground">{collateral.name}</p>
+              {state.assets.map((collateral) => {
+                const Icon = COLLATERAL_ICONS[collateral.id as keyof typeof COLLATERAL_ICONS] || EthIcon;
+                const collateralPrice = state.prices[collateral.coingeckoId] ?? 0;
+                const collateralName = collateral.id === "ETH" ? "Ethereum" : collateral.name;
+
+                return (
+                  <div
+                    key={collateral.id}
+                    onClick={() => { playClickSound(); state.setSelectedAssetId(collateral.id); }}
+                    className={`p-4 rounded-xl border cursor-pointer transition-all ${
+                      state.selectedAsset.id === collateral.id
+                        ? "border-primary bg-primary/5 shadow-lg"
+                        : "border-border hover:border-primary/50 bg-muted/30"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 mb-3">
+                      <Icon />
+                      <div>
+                        <p className="font-medium">{collateral.symbol}</p>
+                        <p className="text-xs text-muted-foreground">{collateralName}</p>
+                      </div>
+                    </div>
+                    <div className="space-y-1 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Price</span>
+                        <span className="font-medium">{formatUsd(collateralPrice)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Max LTV</span>
+                        <span className="font-medium text-green-500">{collateral.ltvBps / 100}%</span>
+                      </div>
                     </div>
                   </div>
-                  <div className="space-y-1 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Price</span>
-                      <span className="font-medium">${collateral.price.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Max LTV</span>
-                      <span className="font-medium text-green-500">{collateral.ltv}%</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
@@ -148,7 +162,7 @@ export function NewLendingView() {
                 />
                 {collateralNum > 0 && (
                   <p className="text-sm text-muted-foreground mt-2">
-                    ≈ ${collateralUsdValue.toLocaleString()}
+                    ≈ {formatUsd(collateralUsdValue)}
                   </p>
                 )}
               </div>
@@ -163,13 +177,13 @@ export function NewLendingView() {
                     <div>
                       <p className="text-muted-foreground mb-1">Total Value</p>
                       <p className="font-semibold text-lg">
-                        ${collateralUsdValue.toLocaleString()}
+                        {formatUsd(collateralUsdValue)}
                       </p>
                     </div>
                     <div>
-                      <p className="text-muted-foreground mb-1">Max Loan (LTV {selectedCollateralData?.ltv}%)</p>
+                      <p className="text-muted-foreground mb-1">Max Loan (LTV {selectedLtvPercent}%)</p>
                       <p className="font-semibold text-lg text-green-500">
-                        ${maxLoanValue.toLocaleString()} USDT
+                        {formatUsd(maxLoanValue)} USDT
                       </p>
                     </div>
                   </div>
@@ -213,7 +227,7 @@ export function NewLendingView() {
                     className="w-full px-4 py-3 bg-input-background rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-ring"
                   />
                   <p className="text-xs text-muted-foreground mt-2">
-                    Max: ${maxLoanValue.toLocaleString()} USDT
+                    Max: {formatUsd(maxLoanValue)} USDT
                   </p>
                 </div>
 
@@ -242,7 +256,7 @@ export function NewLendingView() {
                           <span className="text-muted-foreground">Liquidation Price</span>
                         </div>
                         <span className="font-medium text-red-500">
-                          ${(borrowNum * 1.1 / (collateralNum || 1)).toFixed(2)}
+                          ${liquidationPrice.toFixed(2)}
                         </span>
                       </div>
                     </>
@@ -261,16 +275,25 @@ export function NewLendingView() {
                 {state.needsCollateralApproval && (
                   <button
                     onClick={() => { playClickSound(); void state.approveCollateral(); }}
-                    disabled={state.isBusy}
+                    disabled={state.isBusy || hasActiveBorrowing}
                     className="w-full px-4 py-3 bg-muted text-foreground rounded-lg border border-border hover:bg-muted/80 transition-colors disabled:opacity-50"
                   >
                     Approve {state.selectedAsset.symbol}
                   </button>
                 )}
 
+                {hasActiveBorrowing && (
+                  <div className="flex gap-2 p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/20">
+                    <CircleAlert className="w-4 h-4 text-yellow-500 flex-shrink-0 mt-0.5" />
+                    <p className="text-xs text-muted-foreground">
+                      You already have an active loan. Repay it fully before borrowing again.
+                    </p>
+                  </div>
+                )}
+
                 <button
                   onClick={handleBorrowClick}
-                  disabled={!borrowNum || borrowNum <= 0 || borrowNum > maxLoanValue || state.isBusy || state.needsCollateralApproval}
+                  disabled={hasActiveBorrowing || !borrowNum || borrowNum <= 0 || state.isBusy || state.needsCollateralApproval}
                   className="w-full px-4 py-3 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Borrow USDT
@@ -296,7 +319,7 @@ export function NewLendingView() {
                 {state.position.collateral} {state.selectedAsset.symbol}
               </p>
               <p className="text-xs text-muted-foreground">
-                ≈ ${(toNumber(state.position.collateral) * (selectedCollateralData?.price || 100)).toLocaleString()}
+                ≈ {formatUsd(toNumber(state.position.collateral) * state.selectedLivePrice)}
               </p>
             </div>
             <div className="p-4 bg-muted/30 rounded-xl space-y-1">
@@ -339,7 +362,7 @@ export function NewLendingView() {
                   />
                   <button
                     type="button"
-                    onClick={() => setRepayInput(totalDebt.toFixed(2))}
+                    onClick={() => setRepayInput(state.position.totalDebt)}
                     className="absolute inset-y-0 right-2.5 my-auto h-6 px-2 text-xs font-semibold text-primary bg-primary/10 rounded hover:bg-primary/20 transition-colors"
                   >
                     Max
