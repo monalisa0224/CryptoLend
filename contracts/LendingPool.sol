@@ -7,12 +7,16 @@ interface IERC20Token {
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
 }
 
+interface IPriceOracle {
+    function getPriceUsdt(bytes32 assetId) external view returns (uint256);
+}
+
 contract LendingPool {
     struct CollateralAsset {
         address token;
         uint8 decimals;
-        uint256 priceUsdt;
         uint256 ltvBps;
+        uint256 liquidationThresholdBps;
         bool enabled;
     }
 
@@ -23,19 +27,23 @@ contract LendingPool {
     }
 
     IERC20Token public immutable mockUsdt;
+    IPriceOracle public immutable priceOracle;
     address public immutable treasury;
 
     uint256 public constant USDT_DECIMALS = 1e6;
     uint256 public constant ETH_DECIMALS = 1e18;
-    uint256 public constant PRICE_USDT_PER_ETH = 100;
     uint256 public constant MAX_LTV_BPS = 7000;
     uint256 public constant INTEREST_BPS = 400;
     uint256 public constant STAKING_APY_BPS = 1200;
+    uint256 public constant LIQUIDATION_CLOSE_FACTOR_BPS = 5000;
+    uint256 public constant LIQUIDATION_BONUS_BPS = 500;
+    uint256 public constant LIQUIDATION_HEALTH_FACTOR_BPS = 11000;
     uint256 public constant BPS_DENOMINATOR = 10000;
     uint256 public constant YEAR_SECONDS = 365 days;
 
     bool private locked;
-    bytes32 public constant ETH_ASSET = keccak256("ETH");
+    bytes32 public constant ETH_ASSET = bytes32("ETH");
+    uint256 public ethLiquidationThresholdBps = 8500;
     mapping(address => LoanPosition) public positions;
     mapping(bytes32 => CollateralAsset) public collateralAssets;
     bytes32[] public collateralAssetIds;
@@ -54,13 +62,15 @@ contract LendingPool {
         uint256 maxBorrowUsdt
     );
     event LiquidityFunded(address indexed funder, uint256 amountUsdt);
-    event CollateralAssetConfigured(bytes32 indexed assetId, address token, uint8 decimals, uint256 priceUsdt, uint256 ltvBps);
+    event CollateralAssetConfigured(bytes32 indexed assetId, address token, uint8 decimals, uint256 ltvBps, uint256 liquidationThresholdBps);
     event TokenBorrowed(address indexed borrower, bytes32 indexed assetId, uint256 collateralAmount, uint256 borrowAmountUsdt, uint256 collateralValueUsdt, uint256 maxBorrowUsdt);
     event Staked(address indexed investor, uint256 amountUsdt);
     event Unstaked(address indexed investor, uint256 amountUsdt);
     event RewardClaimed(address indexed investor, uint256 rewardUsdt);
     event Repaid(address indexed borrower, uint256 amountUsdt, uint256 interestPaidUsdt, uint256 principalPaidUsdt);
     event CollateralWithdrawn(address indexed borrower, uint256 ethCollateralWei);
+    event LiquidationThresholdUpdated(bytes32 indexed assetId, uint256 liquidationThresholdBps);
+    event Liquidated(address indexed liquidator, address indexed borrower, bytes32 indexed assetId, uint256 repayAmountUsdt, uint256 collateralSeized, uint256 bonusUsdt);
 
     modifier nonReentrant() {
         require(!locked, "Reentrant call");
@@ -74,9 +84,11 @@ contract LendingPool {
         _;
     }
 
-    constructor(address mockUsdtAddress) {
+    constructor(address mockUsdtAddress, address priceOracleAddress) {
         require(mockUsdtAddress != address(0), "Invalid USDT");
+        require(priceOracleAddress != address(0), "Invalid oracle");
         mockUsdt = IERC20Token(mockUsdtAddress);
+        priceOracle = IPriceOracle(priceOracleAddress);
         treasury = msg.sender;
     }
 
@@ -84,13 +96,13 @@ contract LendingPool {
         bytes32 assetId,
         address token,
         uint8 decimals_,
-        uint256 priceUsdt,
-        uint256 ltvBps
+        uint256 ltvBps,
+        uint256 liquidationThresholdBps_
     ) external onlyTreasury {
         require(assetId != bytes32(0), "Invalid asset");
         require(token != address(0), "Invalid token");
-        require(priceUsdt > 0, "Invalid price");
         require(ltvBps > 0 && ltvBps <= BPS_DENOMINATOR, "Invalid LTV");
+        require(liquidationThresholdBps_ >= ltvBps && liquidationThresholdBps_ <= BPS_DENOMINATOR, "Invalid threshold");
 
         if (!collateralAssets[assetId].enabled) {
             collateralAssetIds.push(assetId);
@@ -99,12 +111,26 @@ contract LendingPool {
         collateralAssets[assetId] = CollateralAsset({
             token: token,
             decimals: decimals_,
-            priceUsdt: priceUsdt,
             ltvBps: ltvBps,
+            liquidationThresholdBps: liquidationThresholdBps_,
             enabled: true
         });
 
-        emit CollateralAssetConfigured(assetId, token, decimals_, priceUsdt, ltvBps);
+        emit CollateralAssetConfigured(assetId, token, decimals_, ltvBps, liquidationThresholdBps_);
+    }
+
+    function setEthLiquidationThresholdBps(uint256 liquidationThresholdBps_) external onlyTreasury {
+        require(liquidationThresholdBps_ >= MAX_LTV_BPS && liquidationThresholdBps_ <= BPS_DENOMINATOR, "Invalid threshold");
+        ethLiquidationThresholdBps = liquidationThresholdBps_;
+        emit LiquidationThresholdUpdated(ETH_ASSET, liquidationThresholdBps_);
+    }
+
+    function setCollateralLiquidationThresholdBps(bytes32 assetId, uint256 liquidationThresholdBps_) external onlyTreasury {
+        CollateralAsset storage asset = collateralAssets[assetId];
+        require(asset.enabled, "Unsupported collateral");
+        require(liquidationThresholdBps_ >= asset.ltvBps && liquidationThresholdBps_ <= BPS_DENOMINATOR, "Invalid threshold");
+        asset.liquidationThresholdBps = liquidationThresholdBps_;
+        emit LiquidationThresholdUpdated(assetId, liquidationThresholdBps_);
     }
 
     function addLiquidity(uint256 usdtAmount) external onlyTreasury nonReentrant {
@@ -116,6 +142,7 @@ contract LendingPool {
     function borrowWithEthCollateral(uint256 borrowAmountUsdt) external payable nonReentrant {
         require(msg.value > 0, "Collateral required");
         require(borrowAmountUsdt > 0, "Borrow amount required");
+        require(positions[msg.sender].borrowedUsdt == 0, "Active loan exists");
 
         uint256 collateralValue = getCollateralValueUsdt(msg.value);
         uint256 maxBorrow = getMaxBorrowUsdt(msg.value);
@@ -142,6 +169,7 @@ contract LendingPool {
         require(asset.enabled, "Unsupported collateral");
         require(collateralAmount > 0, "Collateral required");
         require(borrowAmountUsdt > 0, "Borrow amount required");
+        require(positions[msg.sender].borrowedUsdt == 0, "Active loan exists");
 
         uint256 collateralValue = getTokenCollateralValueUsdt(assetId, collateralAmount);
         uint256 maxBorrow = (collateralValue * asset.ltvBps) / BPS_DENOMINATOR;
@@ -200,6 +228,71 @@ contract LendingPool {
         totalBorrowedUsdt -= principal;
 
         emit Repaid(msg.sender, totalDebt, interest, principal);
+    }
+
+    function liquidate(
+        address borrower,
+        bytes32 assetId,
+        uint256 repayAmountUsdt
+    ) external onlyTreasury nonReentrant {
+        require(borrower != address(0), "Invalid borrower");
+        require(borrower != msg.sender, "Cannot self liquidate");
+        require(repayAmountUsdt > 0, "Repay amount required");
+
+        LoanPosition storage position = positions[borrower];
+        require(position.borrowedUsdt > 0, "No active loan");
+
+        (,, uint256 totalDebt, uint256 healthFactorBps) = getBorrowerRiskData(borrower);
+        require(healthFactorBps <= LIQUIDATION_HEALTH_FACTOR_BPS, "Position healthy");
+        require(repayAmountUsdt <= totalDebt, "Repay exceeds debt");
+
+        uint256 maxRepay = (totalDebt * LIQUIDATION_CLOSE_FACTOR_BPS) / BPS_DENOMINATOR;
+        require(repayAmountUsdt <= maxRepay || repayAmountUsdt == totalDebt, "Exceeds close factor");
+
+        (uint256 seizeAmount,, uint256 bonusUsdt) = previewLiquidation(borrower, assetId, repayAmountUsdt);
+
+        require(mockUsdt.transferFrom(msg.sender, address(this), repayAmountUsdt), "Repay transfer failed");
+        _applyDebtPayment(borrower, repayAmountUsdt);
+        _seizeCollateral(borrower, msg.sender, assetId, seizeAmount);
+
+        emit Liquidated(msg.sender, borrower, assetId, repayAmountUsdt, seizeAmount, bonusUsdt);
+    }
+
+    function _applyDebtPayment(address borrower, uint256 amountUsdt) private {
+        LoanPosition storage position = positions[borrower];
+        uint256 interest = getAccruedInterestUsdt(borrower);
+        uint256 interestPaid = amountUsdt > interest ? interest : amountUsdt;
+        uint256 principalPaid = amountUsdt - interestPaid;
+
+        if (principalPaid > 0) {
+            if (principalPaid >= position.borrowedUsdt) {
+                totalBorrowedUsdt -= position.borrowedUsdt;
+                position.borrowedUsdt = 0;
+            } else {
+                position.borrowedUsdt -= principalPaid;
+                totalBorrowedUsdt -= principalPaid;
+            }
+        }
+
+        position.updatedAt = block.timestamp;
+    }
+
+    function _seizeCollateral(address borrower, address liquidator, bytes32 assetId, uint256 seizeAmount) private {
+        if (assetId == ETH_ASSET) {
+            LoanPosition storage position = positions[borrower];
+            require(seizeAmount <= position.collateralWei, "Insufficient collateral");
+            position.collateralWei -= seizeAmount;
+            (bool sent, ) = liquidator.call{value: seizeAmount}("");
+            require(sent, "ETH transfer failed");
+            return;
+        }
+
+        CollateralAsset memory asset = collateralAssets[assetId];
+        require(asset.enabled, "Unsupported collateral");
+        require(seizeAmount <= tokenCollateral[borrower][assetId], "Insufficient collateral");
+        tokenCollateral[borrower][assetId] -= seizeAmount;
+        totalTokenCollateral[assetId] -= seizeAmount;
+        require(IERC20Token(asset.token).transfer(liquidator, seizeAmount), "Collateral transfer failed");
     }
 
     function withdrawAllCollateral() external nonReentrant {
@@ -302,18 +395,72 @@ contract LendingPool {
         return position.borrowedUsdt + getAccruedInterestUsdt(borrower);
     }
 
-    function getCollateralValueUsdt(uint256 collateralWei) public pure returns (uint256) {
-        return (collateralWei * PRICE_USDT_PER_ETH * USDT_DECIMALS) / ETH_DECIMALS;
+    function getBorrowerRiskData(address borrower) public view returns (
+        uint256 collateralValueUsdt,
+        uint256 liquidationValueUsdt,
+        uint256 debtUsdt,
+        uint256 healthFactorBps
+    ) {
+        LoanPosition memory position = positions[borrower];
+
+        if (position.collateralWei > 0) {
+            uint256 ethValue = getCollateralValueUsdt(position.collateralWei);
+            collateralValueUsdt += ethValue;
+            liquidationValueUsdt += (ethValue * ethLiquidationThresholdBps) / BPS_DENOMINATOR;
+        }
+
+        for (uint256 i = 0; i < collateralAssetIds.length; i++) {
+            bytes32 assetId = collateralAssetIds[i];
+            uint256 amount = tokenCollateral[borrower][assetId];
+            if (amount == 0) continue;
+
+            CollateralAsset memory asset = collateralAssets[assetId];
+            uint256 tokenValue = getTokenCollateralValueUsdt(assetId, amount);
+            collateralValueUsdt += tokenValue;
+            liquidationValueUsdt += (tokenValue * asset.liquidationThresholdBps) / BPS_DENOMINATOR;
+        }
+
+        debtUsdt = getTotalDebtUsdt(borrower);
+        healthFactorBps = debtUsdt > 0 ? (liquidationValueUsdt * BPS_DENOMINATOR) / debtUsdt : type(uint256).max;
     }
 
-    function getMaxBorrowUsdt(uint256 collateralWei) public pure returns (uint256) {
+    function previewLiquidation(
+        address borrower,
+        bytes32 assetId,
+        uint256 repayAmountUsdt
+    ) public view returns (
+        uint256 seizeAmount,
+        uint256 seizeValueUsdt,
+        uint256 bonusUsdt
+    ) {
+        require(repayAmountUsdt > 0, "Repay amount required");
+        bonusUsdt = (repayAmountUsdt * LIQUIDATION_BONUS_BPS) / BPS_DENOMINATOR;
+        seizeValueUsdt = repayAmountUsdt + bonusUsdt;
+
+        if (assetId == ETH_ASSET) {
+            seizeAmount = (seizeValueUsdt * ETH_DECIMALS) / priceOracle.getPriceUsdt(ETH_ASSET);
+            require(seizeAmount <= positions[borrower].collateralWei, "Insufficient collateral");
+            return (seizeAmount, seizeValueUsdt, bonusUsdt);
+        }
+
+        CollateralAsset memory asset = collateralAssets[assetId];
+        require(asset.enabled, "Unsupported collateral");
+        seizeAmount = (seizeValueUsdt * (10 ** asset.decimals)) / priceOracle.getPriceUsdt(assetId);
+        require(seizeAmount <= tokenCollateral[borrower][assetId], "Insufficient collateral");
+    }
+
+    function getCollateralValueUsdt(uint256 collateralWei) public view returns (uint256) {
+        return (collateralWei * priceOracle.getPriceUsdt(ETH_ASSET)) / ETH_DECIMALS;
+    }
+
+    function getMaxBorrowUsdt(uint256 collateralWei) public view returns (uint256) {
         return (getCollateralValueUsdt(collateralWei) * MAX_LTV_BPS) / BPS_DENOMINATOR;
     }
 
     function getTokenCollateralValueUsdt(bytes32 assetId, uint256 collateralAmount) public view returns (uint256) {
         CollateralAsset memory asset = collateralAssets[assetId];
         require(asset.enabled, "Unsupported collateral");
-        return (collateralAmount * asset.priceUsdt) / (10 ** asset.decimals);
+        return (collateralAmount * priceOracle.getPriceUsdt(assetId)) / (10 ** asset.decimals);
     }
 
     function getTokenMaxBorrowUsdt(bytes32 assetId, uint256 collateralAmount) public view returns (uint256) {

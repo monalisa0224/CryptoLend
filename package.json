@@ -12,6 +12,7 @@
     "hardhat:compile": "set \"APPDATA=%CD%\\.roamingappdata\" && set \"LOCALAPPDATA=%CD%\\.localappdata\" && hardhat compile",
     "hardhat:test": "set \"APPDATA=%CD%\\.roamingappdata\" && set \"LOCALAPPDATA=%CD%\\.localappdata\" && hardhat test",
     "deploy:local": "set \"APPDATA=%CD%\\.roamingappdata\" && set \"LOCALAPPDATA=%CD%\\.localappdata\" && hardhat run scripts/deploy.js --network localhost",
+    "oracle:update": "set \"APPDATA=%CD%\\.roamingappdata\" && set \"LOCALAPPDATA=%CD%\\.localappdata\" && hardhat run scripts/update-oracle-prices.js --network localhost",
     "db:push": "set \"APPDATA=%CD%\\.roamingappdata\" && set \"LOCALAPPDATA=%CD%\\.localappdata\" && set \"CHECKPOINT_DISABLE=1\" && prisma db push",
     "db:studio": "set \"APPDATA=%CD%\\.roamingappdata\" && set \"LOCALAPPDATA=%CD%\\.localappdata\" && set \"CHECKPOINT_DISABLE=1\" && prisma studio"
   },

@@ -4,7 +4,7 @@ const { loadFixture } = require("@nomicfoundation/hardhat-network-helpers");
 
 describe("LendingPool", function () {
   async function deployFixture() {
-    const [deployer, borrower] = await ethers.getSigners();
+    const [deployer, borrower, liquidator] = await ethers.getSigners();
     const parseUsdt = (value) => ethers.parseUnits(value, 6);
     const parseBtc = (value) => ethers.parseUnits(value, 8);
     const parseSol = (value) => ethers.parseUnits(value, 9);
@@ -17,11 +17,15 @@ describe("LendingPool", function () {
     const mockBtc = await MockToken.deploy("BTC", "BTC", 8);
     const mockSol = await MockToken.deploy("Solana", "SOL", 9);
 
+    const PriceOracle = await ethers.getContractFactory("PriceOracle");
+    const priceOracle = await PriceOracle.deploy();
+
     const LendingPool = await ethers.getContractFactory("LendingPool");
-    const lendingPool = await LendingPool.deploy(await mockUsdt.getAddress());
+    const lendingPool = await LendingPool.deploy(await mockUsdt.getAddress(), await priceOracle.getAddress());
 
     await mockUsdt.mint(deployer.address, parseUsdt("25000"));
     await mockUsdt.mint(borrower.address, parseUsdt("10000"));
+    await mockUsdt.mint(liquidator.address, parseUsdt("10000"));
     await mockBtc.mint(borrower.address, parseBtc("1"));
     await mockSol.mint(borrower.address, parseSol("100"));
     await mockUsdt.transfer(await lendingPool.getAddress(), parseUsdt("5000"));
@@ -29,10 +33,11 @@ describe("LendingPool", function () {
       to: await lendingPool.getAddress(),
       value: ethers.parseEther("1000")
     });
-    await lendingPool.configureCollateralAsset(assetId("BTC"), await mockBtc.getAddress(), 8, parseUsdt("65000"), 7000);
-    await lendingPool.configureCollateralAsset(assetId("SOL"), await mockSol.getAddress(), 9, parseUsdt("150"), 6500);
+    await priceOracle.setPricesUsdt([assetId("ETH"), assetId("BTC"), assetId("SOL")], [parseUsdt("100"), parseUsdt("65000"), parseUsdt("150")]);
+    await lendingPool.configureCollateralAsset(assetId("BTC"), await mockBtc.getAddress(), 8, 7000, 8500);
+    await lendingPool.configureCollateralAsset(assetId("SOL"), await mockSol.getAddress(), 9, 6500, 8000);
 
-    return { deployer, borrower, mockUsdt, mockBtc, mockSol, lendingPool, parseUsdt, parseBtc, parseSol, assetId };
+    return { deployer, borrower, liquidator, mockUsdt, mockBtc, mockSol, priceOracle, lendingPool, parseUsdt, parseBtc, parseSol, assetId };
   }
 
   it("deploys MockUSDT and LendingPool with funded liquidity", async function () {
@@ -121,6 +126,38 @@ describe("LendingPool", function () {
     ).to.be.revertedWith("Exceeds max LTV");
   });
 
+  it("rejects a second ETH borrow while the borrower has an active loan", async function () {
+    const { borrower, lendingPool, parseUsdt } = await loadFixture(deployFixture);
+
+    await lendingPool.connect(borrower).borrowWithEthCollateral(parseUsdt("0.7"), { value: ethers.parseEther("0.01") });
+
+    await expect(
+      lendingPool.connect(borrower).borrowWithEthCollateral(parseUsdt("0.7"), { value: ethers.parseEther("0.01") })
+    ).to.be.revertedWith("Active loan exists");
+  });
+
+  it("rejects token collateral borrowing while the borrower has an active ETH loan", async function () {
+    const { borrower, mockBtc, lendingPool, parseUsdt, parseBtc, assetId } = await loadFixture(deployFixture);
+
+    await lendingPool.connect(borrower).borrowWithEthCollateral(parseUsdt("0.7"), { value: ethers.parseEther("0.01") });
+    await mockBtc.connect(borrower).approve(await lendingPool.getAddress(), parseBtc("0.01"));
+
+    await expect(
+      lendingPool.connect(borrower).borrowWithTokenCollateral(assetId("BTC"), parseBtc("0.01"), parseUsdt("450"))
+    ).to.be.revertedWith("Active loan exists");
+  });
+
+  it("uses the oracle price for collateral valuation", async function () {
+    const { borrower, priceOracle, lendingPool, parseUsdt, assetId } = await loadFixture(deployFixture);
+
+    await priceOracle.setPriceUsdt(assetId("ETH"), parseUsdt("200"));
+
+    expect(await lendingPool.getCollateralValueUsdt(ethers.parseEther("0.01"))).to.equal(parseUsdt("2"));
+    await expect(
+      lendingPool.connect(borrower).borrowWithEthCollateral(parseUsdt("1.4"), { value: ethers.parseEther("0.01") })
+    ).to.emit(lendingPool, "Borrowed");
+  });
+
   it("accrues interest and lets a borrower repay the full ETH loan", async function () {
     const { borrower, mockUsdt, lendingPool, parseUsdt } = await loadFixture(deployFixture);
     const collateral = ethers.parseEther("0.01");
@@ -174,10 +211,14 @@ describe("LendingPool", function () {
 
     await mockBtc.connect(borrower).approve(await lendingPool.getAddress(), parseBtc("0.01"));
     await lendingPool.connect(borrower).borrowWithTokenCollateral(assetId("BTC"), parseBtc("0.01"), parseUsdt("450"));
+    let totalDebt = await lendingPool.getTotalDebtUsdt(borrower.address);
+    await mockUsdt.connect(borrower).approve(await lendingPool.getAddress(), totalDebt + parseUsdt("1"));
+    await lendingPool.connect(borrower).repayFullLoan();
+    await lendingPool.connect(borrower).withdrawAllCollateral();
+
     await mockSol.connect(borrower).approve(await lendingPool.getAddress(), parseSol("10"));
     await lendingPool.connect(borrower).borrowWithTokenCollateral(assetId("SOL"), parseSol("10"), parseUsdt("900"));
-
-    const totalDebt = await lendingPool.getTotalDebtUsdt(borrower.address);
+    totalDebt = await lendingPool.getTotalDebtUsdt(borrower.address);
     await mockUsdt.connect(borrower).approve(await lendingPool.getAddress(), totalDebt + parseUsdt("1"));
     await lendingPool.connect(borrower).repayFullLoan();
     await lendingPool.connect(borrower).withdrawAllCollateral();
@@ -186,6 +227,89 @@ describe("LendingPool", function () {
     expect(await lendingPool.tokenCollateral(borrower.address, assetId("SOL"))).to.equal(0);
     expect(await mockBtc.balanceOf(borrower.address)).to.equal(parseBtc("1"));
     expect(await mockSol.balanceOf(borrower.address)).to.equal(parseSol("100"));
+  });
+
+  it("rejects liquidation while a position is healthy", async function () {
+    const { deployer, borrower, mockUsdt, lendingPool, parseUsdt, assetId } = await loadFixture(deployFixture);
+
+    await lendingPool.connect(borrower).borrowWithEthCollateral(parseUsdt("0.7"), { value: ethers.parseEther("0.01") });
+    await mockUsdt.connect(deployer).approve(await lendingPool.getAddress(), parseUsdt("0.35"));
+
+    await expect(
+      lendingPool.connect(deployer).liquidate(borrower.address, assetId("ETH"), parseUsdt("0.35"))
+    ).to.be.revertedWith("Position healthy");
+  });
+
+  it("lets treasury liquidate when health factor is at or below 1.1", async function () {
+    const { deployer, borrower, mockUsdt, priceOracle, lendingPool, parseUsdt, assetId } = await loadFixture(deployFixture);
+
+    await lendingPool.connect(borrower).borrowWithEthCollateral(parseUsdt("0.7"), { value: ethers.parseEther("0.01") });
+    await priceOracle.setPriceUsdt(assetId("ETH"), parseUsdt("90"));
+
+    const [, , , healthFactorBps] = await lendingPool.getBorrowerRiskData(borrower.address);
+    expect(healthFactorBps).to.be.lessThanOrEqual(11000n);
+
+    await mockUsdt.connect(deployer).approve(await lendingPool.getAddress(), parseUsdt("0.35"));
+    await expect(
+      lendingPool.connect(deployer).liquidate(borrower.address, assetId("ETH"), parseUsdt("0.35"))
+    ).to.emit(lendingPool, "Liquidated");
+  });
+
+  it("rejects non-treasury liquidation", async function () {
+    const { borrower, liquidator, mockUsdt, priceOracle, lendingPool, parseUsdt, assetId } = await loadFixture(deployFixture);
+
+    await lendingPool.connect(borrower).borrowWithEthCollateral(parseUsdt("0.7"), { value: ethers.parseEther("0.01") });
+    await priceOracle.setPriceUsdt(assetId("ETH"), parseUsdt("80"));
+    await mockUsdt.connect(liquidator).approve(await lendingPool.getAddress(), parseUsdt("0.35"));
+
+    await expect(
+      lendingPool.connect(liquidator).liquidate(borrower.address, assetId("ETH"), parseUsdt("0.35"))
+    ).to.be.revertedWith("Not treasury");
+  });
+
+  it("lets treasury repay risky ETH debt and receive bonus collateral", async function () {
+    const { deployer, borrower, mockUsdt, priceOracle, lendingPool, parseUsdt, assetId } = await loadFixture(deployFixture);
+
+    await lendingPool.connect(borrower).borrowWithEthCollateral(parseUsdt("0.7"), { value: ethers.parseEther("0.01") });
+    await priceOracle.setPriceUsdt(assetId("ETH"), parseUsdt("80"));
+
+    const repayAmount = parseUsdt("0.35");
+    const [seizeAmount, seizeValue, bonus] = await lendingPool.previewLiquidation(borrower.address, assetId("ETH"), repayAmount);
+    expect(seizeValue).to.equal(parseUsdt("0.3675"));
+    expect(bonus).to.equal(parseUsdt("0.0175"));
+
+    const beforeBalance = await mockUsdt.balanceOf(deployer.address);
+    await mockUsdt.connect(deployer).approve(await lendingPool.getAddress(), repayAmount);
+    await expect(
+      lendingPool.connect(deployer).liquidate(borrower.address, assetId("ETH"), repayAmount)
+    ).to.emit(lendingPool, "Liquidated");
+
+    const position = await lendingPool.positions(borrower.address);
+    expect(position.borrowedUsdt).to.equal(parseUsdt("0.35"));
+    expect(position.collateralWei).to.equal(ethers.parseEther("0.01") - seizeAmount);
+    expect(await mockUsdt.balanceOf(deployer.address)).to.equal(beforeBalance - repayAmount);
+  });
+
+  it("lets treasury repay risky token debt and receive bonus collateral", async function () {
+    const { deployer, borrower, mockUsdt, mockBtc, priceOracle, lendingPool, parseUsdt, parseBtc, assetId } = await loadFixture(deployFixture);
+    const collateral = parseBtc("0.01");
+    const borrowAmount = parseUsdt("450");
+
+    await mockBtc.connect(borrower).approve(await lendingPool.getAddress(), collateral);
+    await lendingPool.connect(borrower).borrowWithTokenCollateral(assetId("BTC"), collateral, borrowAmount);
+    await priceOracle.setPriceUsdt(assetId("BTC"), parseUsdt("50000"));
+
+    const repayAmount = parseUsdt("225");
+    const [seizeAmount] = await lendingPool.previewLiquidation(borrower.address, assetId("BTC"), repayAmount);
+
+    await mockUsdt.connect(deployer).approve(await lendingPool.getAddress(), repayAmount);
+    await expect(
+      lendingPool.connect(deployer).liquidate(borrower.address, assetId("BTC"), repayAmount)
+    ).to.emit(lendingPool, "Liquidated");
+
+    expect(await lendingPool.tokenCollateral(borrower.address, assetId("BTC"))).to.equal(collateral - seizeAmount);
+    expect(await mockBtc.balanceOf(deployer.address)).to.equal(seizeAmount);
+    expect((await lendingPool.positions(borrower.address)).borrowedUsdt).to.be.closeTo(parseUsdt("225"), 2n);
   });
 
   it("rejects non-treasury liquidity funding", async function () {
