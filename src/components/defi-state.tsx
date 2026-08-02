@@ -32,7 +32,7 @@ export type Asset = {
   address?: string;
   decimals: number;
   ltvBps: number;
-  fallbackPrice: string;
+  liquidationThresholdBps: number;
 };
 
 export type BorrowHistory = {
@@ -89,13 +89,13 @@ type DefiContextType = {
   mintMockTokens: () => Promise<void>;
   disconnectWallet: () => void;
   assets: Asset[];
+  setAssetLiquidationThreshold: (assetId: string, thresholdPercent: string) => Promise<void>;
   visibleAssets: Asset[];
   selectedAsset: Asset;
   setSelectedAssetId: (v: string) => void;
   selectedBalance: string;
   selectedAllowance: string;
   selectedLivePrice: number;
-  selectedDemoPrice: number;
   prices: Record<string, number>;
   priceSource: string;
   assetSearch: string;
@@ -115,6 +115,7 @@ type DefiContextType = {
   collateralValue: number;
   liveCollateralValue: number;
   maxBorrow: number;
+  safeMaxBorrow: number;
   healthFactor: number;
   dailyReward: number;
   yearlyReward: number;
@@ -138,6 +139,7 @@ type DefiContextType = {
   approveCollateral: () => Promise<void>;
   borrow: () => Promise<void>;
   approveRepay: () => Promise<void>;
+  repayPosition: (amount: string) => Promise<void>;
   repayLoan: () => Promise<void>;
   repayFullLoan: () => Promise<void>;
   withdrawCollateral: () => Promise<void>;
@@ -156,11 +158,17 @@ const HARDHAT_CHAIN_HEX = "0x7a69";
 const LOCAL_RPC_URL = "http://127.0.0.1:8545";
 const STAKING_APY = 12;
 const GAS_BUFFER_ETH = 0.01;
+const SAFE_MAX_BORROW_BPS = 9950;
+const TEMP_LIQUIDATION_THRESHOLDS_BPS: Record<string, number> = {
+  ETH: 8500,
+  BTC: 8500,
+  SOL: 8000,
+};
 
 const DEFAULT_ASSETS: Asset[] = [
-  { id: "ETH", name: "ETH", symbol: "ETH", coingeckoId: "ethereum", type: "native", decimals: 18, ltvBps: 7000, fallbackPrice: "100" },
-  { id: "BTC", name: "BTC", symbol: "BTC", coingeckoId: "bitcoin", type: "erc20", decimals: 8, ltvBps: 7000, fallbackPrice: "65000" },
-  { id: "SOL", name: "Solana", symbol: "SOL", coingeckoId: "solana", type: "erc20", decimals: 9, ltvBps: 6500, fallbackPrice: "150" },
+  { id: "ETH", name: "ETH", symbol: "ETH", coingeckoId: "ethereum", type: "native", decimals: 18, ltvBps: 7000, liquidationThresholdBps: TEMP_LIQUIDATION_THRESHOLDS_BPS.ETH },
+  { id: "BTC", name: "BTC", symbol: "BTC", coingeckoId: "bitcoin", type: "erc20", decimals: 8, ltvBps: 7000, liquidationThresholdBps: TEMP_LIQUIDATION_THRESHOLDS_BPS.BTC },
+  { id: "SOL", name: "Solana", symbol: "SOL", coingeckoId: "solana", type: "erc20", decimals: 9, ltvBps: 6500, liquidationThresholdBps: TEMP_LIQUIDATION_THRESHOLDS_BPS.SOL },
 ];
 
 export function shortAddress(address: string) {
@@ -212,6 +220,7 @@ export function playClickSound() {
 const deploymentAssets = (DEPLOYMENT as unknown as { assets?: Asset[] }).assets;
 const SUPPORTED_ASSETS = (deploymentAssets?.length ? deploymentAssets : DEFAULT_ASSETS).map((asset) => ({
   ...asset,
+  liquidationThresholdBps: asset.liquidationThresholdBps ?? TEMP_LIQUIDATION_THRESHOLDS_BPS[asset.id] ?? 8000,
   address:
     asset.address ||
     (asset.id === "BTC"
@@ -230,7 +239,7 @@ export function DefiProvider({ children }: { children: ReactNode }) {
   const [assetAllowances, setAssetAllowances] = useState<Record<string, string>>({});
   const [tokenCollateral, setTokenCollateral] = useState<Record<string, string>>({});
   const [prices, setPrices] = useState<Record<string, number>>({});
-  const [priceSource, setPriceSource] = useState("fallback");
+  const [priceSource, setPriceSource] = useState("unavailable");
   const [poolLiquidity, setPoolLiquidity] = useState("0");
   const [poolCollateral, setPoolCollateral] = useState("0");
   const [totalBorrowed, setTotalBorrowed] = useState("0");
@@ -254,37 +263,92 @@ export function DefiProvider({ children }: { children: ReactNode }) {
   const [borrowHistory, setBorrowHistory] = useState<BorrowHistory[]>([]);
   const [repayHistory, setRepayHistory] = useState<RepayHistory[]>([]);
   const [stakingHistory, setStakingHistory] = useState<StakingHistory[]>([]);
+  const [assetLiquidationThresholds, setAssetLiquidationThresholds] = useState<Record<string, number>>({});
 
   const deploymentReady = hasDeployment();
-  const selectedAsset = SUPPORTED_ASSETS.find((asset) => asset.id === selectedAssetId) || SUPPORTED_ASSETS[0];
+  const assets = useMemo(
+    () =>
+      SUPPORTED_ASSETS.map((asset) => ({
+        ...asset,
+        liquidationThresholdBps: assetLiquidationThresholds[asset.id] ?? asset.liquidationThresholdBps,
+      })),
+    [assetLiquidationThresholds],
+  );
+  const selectedAsset = assets.find((asset) => asset.id === selectedAssetId) || assets[0];
   const selectedBalance = assetBalances[selectedAsset.id] || "0";
   const selectedAllowance = assetAllowances[selectedAsset.id] || "0";
-  const selectedDemoPrice = toNumber(selectedAsset.fallbackPrice);
-  const selectedLivePrice = prices[selectedAsset.coingeckoId] || selectedDemoPrice;
-  const collateralValue = useMemo(() => toNumber(collateralAmount) * selectedDemoPrice, [collateralAmount, selectedDemoPrice]);
-  const liveCollateralValue = useMemo(() => toNumber(collateralAmount) * selectedLivePrice, [collateralAmount, selectedLivePrice]);
+  const selectedLivePrice = prices[selectedAsset.coingeckoId] ?? 0;
+  const collateralValue = useMemo(() => toNumber(collateralAmount) * selectedLivePrice, [collateralAmount, selectedLivePrice]);
+  const liveCollateralValue = collateralValue;
   const maxBorrow = useMemo(() => (collateralValue * selectedAsset.ltvBps) / 10000, [collateralValue, selectedAsset.ltvBps]);
+  const safeMaxBorrow = useMemo(() => (maxBorrow * SAFE_MAX_BORROW_BPS) / 10000, [maxBorrow]);
   const healthFactor = useMemo(() => {
     const borrow = toNumber(borrowAmount);
-    return borrow > 0 ? maxBorrow / borrow : 0;
-  }, [borrowAmount, maxBorrow]);
+    return borrow > 0 ? ((collateralValue * selectedAsset.liquidationThresholdBps) / 10000) / borrow : 0;
+  }, [borrowAmount, collateralValue, selectedAsset.liquidationThresholdBps]);
   const needsStakeApproval = toNumber(stakeAmount) > toNumber(usdtAllowance);
   const needsRepayApproval = toNumber(repayAmount) > toNumber(usdtAllowance);
   const needsFullRepayApproval = toNumber(position.totalDebt) + 0.01 > toNumber(usdtAllowance);
   const needsCollateralApproval = selectedAsset.type === "erc20" && toNumber(collateralAmount) > toNumber(selectedAllowance);
   const dailyReward = (toNumber(stakeAmount) * STAKING_APY) / 100 / 365;
   const yearlyReward = (toNumber(stakeAmount) * STAKING_APY) / 100;
-  const portfolioValue = SUPPORTED_ASSETS.reduce((sum, asset) => {
-    const price = prices[asset.coingeckoId] || toNumber(asset.fallbackPrice);
+  const portfolioValue = assets.reduce((sum, asset) => {
+    const price = prices[asset.coingeckoId] ?? 0;
     return sum + toNumber(assetBalances[asset.id] || "0") * price;
   }, toNumber(usdtBalance));
   const isTreasury = account && account.toLowerCase() === DEPLOYMENT.deployer.toLowerCase();
 
-  const visibleAssets = SUPPORTED_ASSETS.filter((asset) => {
+  const visibleAssets = assets.filter((asset) => {
     const matchesSearch = `${asset.name} ${asset.symbol}`.toLowerCase().includes(assetSearch.toLowerCase());
     const hasBalance = !account || toNumber(assetBalances[asset.id] || "0") > 0;
     return matchesSearch && hasBalance;
   });
+
+  const refreshLiquidationThresholds = useCallback(async () => {
+    if (!deploymentReady) return;
+
+    const provider = new JsonRpcProvider(LOCAL_RPC_URL);
+    const pool = new Contract(DEPLOYMENT.lendingPool, LENDING_POOL_ABI, provider);
+    const entries = await Promise.all(
+      SUPPORTED_ASSETS.map(async (asset) => {
+        if (asset.id === "ETH") {
+          return [asset.id, Number(await pool.ethLiquidationThresholdBps())] as const;
+        }
+
+        const configured = await pool.collateralAssets(assetKey(asset.id));
+        return [asset.id, Number(configured.liquidationThresholdBps ?? configured[3])] as const;
+      }),
+    );
+    const nextThresholds = Object.fromEntries(entries);
+    setAssetLiquidationThresholds(nextThresholds);
+    localStorage.setItem("liquidation-thresholds-bps", JSON.stringify(nextThresholds));
+  }, [deploymentReady]);
+
+  const setAssetLiquidationThreshold = useCallback(async (assetId: string, thresholdPercent: string) => {
+    const nextPercent = Number(thresholdPercent);
+    if (!Number.isFinite(nextPercent) || nextPercent <= 0 || nextPercent > 100) {
+      throw new Error("Liquidation threshold must be between 0 and 100.");
+    }
+
+    const asset = assets.find((item) => item.id === assetId);
+    if (!asset) throw new Error("Unsupported collateral asset.");
+
+    const nextBps = Math.round(nextPercent * 100);
+    if (nextBps < asset.ltvBps) {
+      throw new Error(`Liquidation threshold must be at least ${(asset.ltvBps / 100).toFixed(0)}% for ${asset.symbol}.`);
+    }
+
+    if (!window.ethereum) throw new Error("MetaMask is not available. Please install MetaMask first.");
+    const provider = new BrowserProvider(window.ethereum);
+    const signer = await provider.getSigner();
+    const pool = new Contract(DEPLOYMENT.lendingPool, LENDING_POOL_ABI, signer);
+    const tx = assetId === "ETH"
+      ? await pool.setEthLiquidationThresholdBps(nextBps)
+      : await pool.setCollateralLiquidationThresholdBps(assetKey(assetId), nextBps);
+
+    await tx.wait();
+    await refreshLiquidationThresholds();
+  }, [assets, refreshLiquidationThresholds]);
 
   const showError = useCallback((message: string) => {
     setError(message);
@@ -336,10 +400,10 @@ export function DefiProvider({ children }: { children: ReactNode }) {
       if (!response.ok) throw new Error("Price API failed");
       const data = await response.json();
       setPrices(data.prices || {});
-      setPriceSource(data.source || "fallback");
+      setPriceSource(data.source || "unavailable");
     } catch {
-      setPrices({ ethereum: 100, bitcoin: 65000, solana: 150 });
-      setPriceSource("fallback");
+      setPrices({});
+      setPriceSource("unavailable");
     }
   }, []);
 
@@ -426,7 +490,7 @@ export function DefiProvider({ children }: { children: ReactNode }) {
       const nextTokenCollateral: Record<string, string> = {};
 
       await Promise.all(
-        SUPPORTED_ASSETS.filter((asset) => asset.type === "erc20" && asset.address).map(async (asset) => {
+        assets.filter((asset) => asset.type === "erc20" && asset.address).map(async (asset) => {
           const token = new Contract(asset.address!, MOCK_USDT_ABI, provider);
           const [balanceRaw, assetAllowanceRaw, collateralRaw] = await Promise.all([
             token.balanceOf(walletAddress),
@@ -455,7 +519,7 @@ export function DefiProvider({ children }: { children: ReactNode }) {
       });
       await refreshProtocol();
     },
-    [account, deploymentReady, getBrowserProvider, refreshProtocol],
+    [account, assets, deploymentReady, getBrowserProvider, refreshProtocol],
   );
 
   const requireWallet = useCallback(() => {
@@ -465,6 +529,9 @@ export function DefiProvider({ children }: { children: ReactNode }) {
 
   const validateBorrow = useCallback(() => {
     requireWallet();
+    if (toNumber(position.borrowed) > 0 || toNumber(position.totalDebt) > 0) {
+      throw new Error("You already have an active loan. Repay it fully before borrowing again.");
+    }
     if (!isPositiveDecimal(collateralAmount)) throw new Error("Collateral amount must be a valid number greater than 0.");
     if (!isPositiveDecimal(borrowAmount)) throw new Error("Borrow amount must be a valid number greater than 0.");
     if (decimalPlaces(collateralAmount) > selectedAsset.decimals) throw new Error(`${selectedAsset.name} supports up to ${selectedAsset.decimals} decimal places.`);
@@ -475,9 +542,12 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     if (selectedAsset.type === "native" && collateral > maxSpendableEth) throw new Error(`Collateral exceeds wallet ETH balance after gas buffer. Max: ${maxSpendableEth.toFixed(4)} ETH.`);
     if (selectedAsset.type === "erc20" && !selectedAsset.address) throw new Error(`${selectedAsset.name} token address is missing. Redeploy contracts first.`);
     if (selectedAsset.type === "erc20" && collateral > toNumber(selectedBalance)) throw new Error(`Collateral exceeds wallet ${selectedAsset.name} balance.`);
-    if (borrow > maxBorrow) throw new Error(`Borrow amount exceeds ${selectedAsset.ltvBps / 100}% max LTV.`);
+    if (selectedLivePrice <= 0) throw new Error(`CoinGecko price is unavailable for ${selectedAsset.symbol}.`);
+    if (borrow > safeMaxBorrow) {
+      throw new Error(`Borrow amount exceeds the displayed max borrow of ${safeMaxBorrow.toFixed(2)} USDT.`);
+    }
     if (borrow > toNumber(poolLiquidity)) throw new Error("Borrow amount exceeds protocol USDT liquidity.");
-  }, [borrowAmount, collateralAmount, ethBalance, maxBorrow, poolLiquidity, requireWallet, selectedAsset, selectedBalance]);
+  }, [borrowAmount, collateralAmount, ethBalance, poolLiquidity, position.borrowed, position.totalDebt, requireWallet, safeMaxBorrow, selectedAsset, selectedBalance, selectedLivePrice]);
 
   const validateStake = useCallback(() => {
     requireWallet();
@@ -548,8 +618,8 @@ export function DefiProvider({ children }: { children: ReactNode }) {
       setStatus("");
       setIsBusy(true);
       requireWallet();
-      const btcAsset = SUPPORTED_ASSETS.find((asset) => asset.id === "BTC");
-      const solAsset = SUPPORTED_ASSETS.find((asset) => asset.id === "SOL");
+      const btcAsset = assets.find((asset) => asset.id === "BTC");
+      const solAsset = assets.find((asset) => asset.id === "SOL");
       if (!btcAsset?.address || !solAsset?.address) {
         throw new Error("Mock token addresses are missing. Redeploy contracts first.");
       }
@@ -577,7 +647,7 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsBusy(false);
     }
-  }, [ensureHardhatNetwork, getBrowserProvider, refreshBalances, requireWallet, showError]);
+  }, [assets, ensureHardhatNetwork, getBrowserProvider, refreshBalances, requireWallet, showError]);
 
   const approveCollateral = useCallback(async () => {
     try {
@@ -610,22 +680,33 @@ export function DefiProvider({ children }: { children: ReactNode }) {
       if (needsCollateralApproval) throw new Error(`Please approve ${selectedAsset.name} before borrowing.`);
       const provider = await getBrowserProvider();
       const signer = await provider.getSigner();
+      const walletAddress = await signer.getAddress();
       const pool = new Contract(DEPLOYMENT.lendingPool, LENDING_POOL_ABI, signer);
       const borrowRaw = parseUnits(borrowAmount, 6);
+      await (
+        selectedAsset.type === "native"
+          ? pool.borrowWithEthCollateral.staticCall(borrowRaw, { value: parseEther(collateralAmount) })
+          : pool.borrowWithTokenCollateral.staticCall(assetKey(selectedAsset.id), parseUnits(collateralAmount, selectedAsset.decimals), borrowRaw)
+      );
       const tx =
         selectedAsset.type === "native"
           ? await pool.borrowWithEthCollateral(borrowRaw, { value: parseEther(collateralAmount) })
           : await pool.borrowWithTokenCollateral(assetKey(selectedAsset.id), parseUnits(collateralAmount, selectedAsset.decimals), borrowRaw);
       setStatus("Borrow transaction submitted. Waiting for confirmation...");
       const receipt = await tx.wait();
-      await fetch("/api/borrow-history", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ walletAddress: await signer.getAddress(), collateralSymbol: selectedAsset.name, collateralAmount, borrowAmount, txHash: receipt.hash }),
-      });
-      setStatus("Borrow successful. Wallet and protocol balances refreshed.");
-      await refreshBalances(await signer.getAddress());
-      await refreshBorrowHistory();
+      if (receipt?.status !== 1) throw new Error("Borrow transaction reverted.");
+      await refreshBalances(walletAddress);
+      try {
+        await fetch("/api/borrow-history", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ walletAddress, collateralSymbol: selectedAsset.name, collateralAmount, borrowAmount, txHash: receipt.hash }),
+        });
+        await refreshBorrowHistory(walletAddress);
+      } catch {
+        // Borrow succeeded on-chain; history sync can be retried on refresh.
+      }
+      setStatus(`Borrow successful. mUSDT balance refreshed in the app. Token: ${DEPLOYMENT.mockUsdt}`);
     } catch (caught) {
       showError(caught instanceof Error ? caught.message : "Borrow transaction failed.");
     } finally {
@@ -705,6 +786,92 @@ export function DefiProvider({ children }: { children: ReactNode }) {
       setIsBusy(false);
     }
   }, [getBrowserProvider, needsFullRepayApproval, position, refreshBalances, refreshRepayHistory, requireWallet, showError, usdtBalance]);
+
+  const repayPosition = useCallback(async (amount: string) => {
+    try {
+      setError("");
+      setStatus("");
+      setIsBusy(true);
+      requireWallet();
+
+      const repaymentAmount = amount.trim();
+      if (toNumber(position.borrowed) <= 0) throw new Error("You do not have an active loan to repay.");
+      if (!isPositiveDecimal(repaymentAmount)) throw new Error("Repay amount must be a valid number greater than 0.");
+      if (decimalPlaces(repaymentAmount) > 6) throw new Error("USDT repay amount supports up to 6 decimal places.");
+
+      const repayValue = toNumber(repaymentAmount);
+      const interestDue = toNumber(position.accruedInterest);
+      const totalDebt = toNumber(position.totalDebt);
+      const isFullRepayment = totalDebt > 0 && totalDebt - repayValue <= 0.000001;
+
+      if (!isFullRepayment && repayValue < interestDue) throw new Error(`Repay amount must cover accrued interest first. Interest due: ${position.accruedInterest} USDT.`);
+      if (repayValue > totalDebt + 0.000001) throw new Error("Repay amount exceeds your total debt.");
+      if (repayValue > toNumber(usdtBalance)) throw new Error("Repay amount exceeds your wallet USDT balance.");
+
+      const approvalAmount = isFullRepayment ? (totalDebt + 1).toFixed(6) : repaymentAmount;
+      if (toNumber(approvalAmount) > toNumber(usdtAllowance)) {
+        setStatus("USDT repay approval submitted. Waiting for confirmation...");
+        await approveUsdt(approvalAmount);
+      }
+
+      const provider = await getBrowserProvider();
+      const signer = await provider.getSigner();
+      const walletAddress = await signer.getAddress();
+      const pool = new Contract(DEPLOYMENT.lendingPool, LENDING_POOL_ABI, signer);
+
+      if (isFullRepayment) {
+        const debtBefore = position.totalDebt;
+        const interestBefore = position.accruedInterest;
+        const principalBefore = position.borrowed;
+
+        setStatus("Full repayment submitted. Waiting for confirmation...");
+        const repayTx = await pool.repayFullLoan();
+        const repayReceipt = await repayTx.wait();
+
+        try {
+          await fetch("/api/repay-history", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ walletAddress, amount: debtBefore, interestPaid: interestBefore, principalPaid: principalBefore, txHash: repayReceipt.hash }),
+          });
+          await refreshRepayHistory(walletAddress);
+        } catch {
+          // Repayment succeeded on-chain; history sync can be retried on refresh.
+        }
+
+        setStatus("Full repayment confirmed. Returning collateral...");
+        const withdrawTx = await pool.withdrawAllCollateral();
+        await withdrawTx.wait();
+        setStatus("Full repayment complete. Collateral returned to your wallet.");
+        await refreshBalances(walletAddress);
+        return;
+      }
+
+      const interestBefore = Math.min(repayValue, interestDue);
+      const principalBefore = Math.max(repayValue - interestBefore, 0);
+      setStatus("Repay transaction submitted. Waiting for confirmation...");
+      const repayTx = await pool.repayUsdt(parseUnits(repaymentAmount, 6));
+      const repayReceipt = await repayTx.wait();
+
+      try {
+        await fetch("/api/repay-history", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ walletAddress, amount: repaymentAmount, interestPaid: interestBefore.toFixed(4), principalPaid: principalBefore.toFixed(4), txHash: repayReceipt.hash }),
+        });
+        await refreshRepayHistory(walletAddress);
+      } catch {
+        // Repayment succeeded on-chain; history sync can be retried on refresh.
+      }
+
+      setStatus("Repayment successful. Loan balance refreshed.");
+      await refreshBalances(walletAddress);
+    } catch (caught) {
+      showError(caught instanceof Error ? caught.message : "Repayment failed.");
+    } finally {
+      setIsBusy(false);
+    }
+  }, [approveUsdt, getBrowserProvider, position, refreshBalances, refreshRepayHistory, requireWallet, showError, usdtAllowance, usdtBalance]);
 
   const withdrawCollateral = useCallback(async () => {
     try {
@@ -880,6 +1047,13 @@ export function DefiProvider({ children }: { children: ReactNode }) {
         ? savedTheme
         : document.documentElement.getAttribute("data-theme") || "light";
     setIsDarkMode(theme === "dark");
+
+    try {
+      const savedThresholds = localStorage.getItem("liquidation-thresholds-bps");
+      if (savedThresholds) setAssetLiquidationThresholds(JSON.parse(savedThresholds));
+    } catch {
+      localStorage.removeItem("liquidation-thresholds-bps");
+    }
   }, []);
 
   useEffect(() => {
@@ -894,8 +1068,9 @@ export function DefiProvider({ children }: { children: ReactNode }) {
       refreshPrices().catch(() => undefined);
     }, 60000);
     refreshProtocol().catch(() => undefined);
+    refreshLiquidationThresholds().catch(() => undefined);
     return () => window.clearInterval(priceTimer);
-  }, [refreshPrices, refreshProtocol]);
+  }, [refreshLiquidationThresholds, refreshPrices, refreshProtocol]);
 
   useEffect(() => {
     if (!window.ethereum) return;
@@ -962,14 +1137,14 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     connectWallet,
     mintMockTokens,
     disconnectWallet,
-    assets: SUPPORTED_ASSETS,
+    assets,
+    setAssetLiquidationThreshold,
     visibleAssets,
     selectedAsset,
     setSelectedAssetId,
     selectedBalance,
     selectedAllowance,
     selectedLivePrice,
-    selectedDemoPrice,
     prices,
     priceSource,
     assetSearch,
@@ -989,6 +1164,7 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     collateralValue,
     liveCollateralValue,
     maxBorrow,
+    safeMaxBorrow,
     healthFactor,
     dailyReward,
     yearlyReward,
@@ -1012,6 +1188,7 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     approveCollateral,
     borrow,
     approveRepay,
+    repayPosition,
     repayLoan,
     repayFullLoan,
     withdrawCollateral,

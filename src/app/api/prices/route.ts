@@ -1,13 +1,9 @@
 import { NextResponse } from "next/server";
 
-const FALLBACK_PRICES = {
-  ethereum: 100,
-  bitcoin: 65000,
-  solana: 150
-};
+const COINGECKO_IDS = ["ethereum", "bitcoin", "solana"] as const;
 
 export async function GET() {
-  const ids = Object.keys(FALLBACK_PRICES).join(",");
+  const ids = COINGECKO_IDS.join(",");
   const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`;
 
   try {
@@ -21,18 +17,22 @@ export async function GET() {
     }
 
     const data = await response.json();
+    const prices = Object.fromEntries(
+      COINGECKO_IDS.map((id) => [id, Number(data[id]?.usd)])
+    );
+
+    if (Object.values(prices).some((price) => !Number.isFinite(price) || price <= 0)) {
+      throw new Error("CoinGecko price data incomplete");
+    }
+
     return NextResponse.json({
       source: "coingecko",
-      prices: {
-        ethereum: Number(data.ethereum?.usd ?? FALLBACK_PRICES.ethereum),
-        bitcoin: Number(data.bitcoin?.usd ?? FALLBACK_PRICES.bitcoin),
-        solana: Number(data.solana?.usd ?? FALLBACK_PRICES.solana)
-      }
+      prices
     });
   } catch {
     return NextResponse.json({
-      source: "fallback",
-      prices: FALLBACK_PRICES
-    });
+      source: "unavailable",
+      prices: {}
+    }, { status: 502 });
   }
 }

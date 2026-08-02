@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import {
   Droplets, TrendingUp, Plus, Minus, Settings, ShieldCheck, AlertTriangle,
@@ -24,6 +24,19 @@ function getPoolHealth(utilPct: number) {
 }
 
 type Tab = "liquidity" | "withdrawal" | "parameters";
+type Notice = { tone: "success" | "error"; text: string };
+
+function ParameterNotice({ notice }: { notice: Notice }) {
+  const isSuccess = notice.tone === "success";
+  const Icon = isSuccess ? CheckCircle2 : XCircle;
+
+  return (
+    <div className={`flex items-center gap-2 rounded-xl border p-4 text-sm ${isSuccess ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
+      <Icon className="h-5 w-5 shrink-0" />
+      <span>{notice.text}</span>
+    </div>
+  );
+}
 
 export function NewLiquidityAdminView() {
   const state = useDefi();
@@ -33,7 +46,10 @@ export function NewLiquidityAdminView() {
   const [depositInput, setDepositInput] = useState("");
   const [reserveInput] = useState("10");
   const [apyInput] = useState("12.5");
-  const [collateralThresholds] = useState({ ETH: "82", BTC: "80", SOL: "75" });
+  const [collateralThresholds, setCollateralThresholds] = useState<Record<string, string>>({});
+  const [parameterNotice, setParameterNotice] = useState<Notice | null>(null);
+  const [isParameterNoticeClosing, setIsParameterNoticeClosing] = useState(false);
+  const [updatingThresholdAsset, setUpdatingThresholdAsset] = useState<string | null>(null);
 
   const liquidity = toNumber(poolLiquidity);
   const borrowed = toNumber(totalBorrowed);
@@ -47,6 +63,48 @@ export function NewLiquidityAdminView() {
     void state.addLiquidity();
     setDepositInput("");
   };
+
+  const handleThresholdInput = (assetId: string, value: string) => {
+    setParameterNotice(null);
+    setIsParameterNoticeClosing(false);
+    setCollateralThresholds((current) => ({ ...current, [assetId]: value }));
+  };
+
+  const handleThresholdUpdate = async (assetId: string) => {
+    try {
+      playClickSound();
+      setUpdatingThresholdAsset(assetId);
+      setIsParameterNoticeClosing(false);
+      setParameterNotice({ tone: "success", text: `${assetId} threshold update submitted. Waiting for confirmation...` });
+      await state.setAssetLiquidationThreshold(assetId, collateralThresholds[assetId] || "");
+      setIsParameterNoticeClosing(false);
+      setParameterNotice({ tone: "success", text: `${assetId} liquidation threshold updated to ${collateralThresholds[assetId]}%.` });
+    } catch (caught) {
+      setIsParameterNoticeClosing(false);
+      setParameterNotice({ tone: "error", text: caught instanceof Error ? caught.message : "Threshold update failed." });
+    } finally {
+      setUpdatingThresholdAsset(null);
+    }
+  };
+
+  useEffect(() => {
+    setCollateralThresholds(
+      Object.fromEntries(state.assets.map((asset) => [asset.id, (asset.liquidationThresholdBps / 100).toString()])),
+    );
+  }, [state.assets]);
+
+  useEffect(() => {
+    if (!parameterNotice) return;
+    const fadeTimer = window.setTimeout(() => setIsParameterNoticeClosing(true), 4500);
+    const clearTimer = window.setTimeout(() => {
+      setParameterNotice(null);
+      setIsParameterNoticeClosing(false);
+    }, 5200);
+    return () => {
+      window.clearTimeout(fadeTimer);
+      window.clearTimeout(clearTimer);
+    };
+  }, [parameterNotice]);
 
   if (!account) {
     return (
@@ -292,26 +350,88 @@ export function NewLiquidityAdminView() {
           )}
 
           {activeTab === "parameters" && (
-            <div className="space-y-8 max-w-lg">
-              <div>
-                <h4 className="text-sm font-semibold">Pool Parameters</h4>
-                <p className="text-xs text-muted-foreground mt-0.5">Protocol-level parameters for the USDT lending pool</p>
-              </div>
-              <div className="space-y-4">
-                <div className="p-4 bg-muted/30 rounded-xl">
-                  <p className="text-xs text-muted-foreground mb-1">Borrow APY</p>
-                  <p className="text-xl font-semibold">{apyInput}%</p>
+            <div className="space-y-6">
+              {parameterNotice && (
+                <div className={`transition duration-700 ${isParameterNoticeClosing ? "-translate-y-2 opacity-0" : "translate-y-0 opacity-100"}`}>
+                  <ParameterNotice notice={parameterNotice} />
                 </div>
-                <div className="p-4 bg-muted/30 rounded-xl">
-                  <p className="text-xs text-muted-foreground mb-1">Reserve Factor</p>
-                  <p className="text-xl font-semibold">{reserveInput}%</p>
+              )}
+
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h4 className="text-base font-semibold">Pool Parameters</h4>
+                  <p className="text-xs text-muted-foreground mt-0.5">Protocol-level parameters for the USDT lending pool</p>
                 </div>
-                <div className="p-4 bg-muted/30 rounded-xl">
-                  <p className="text-xs text-muted-foreground mb-1">Max LTV (ETH)</p>
-                  <p className="text-xl font-semibold">75%</p>
+                <div className="rounded-full border border-blue-500/20 bg-blue-500/10 px-3 py-1 text-xs font-medium text-blue-500">
+                  Treasury Controls
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground">Parameter changes require smart contract updates via the deployed admin functions.</p>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {[
+                  { label: "Borrow APY", value: `${apyInput}%`, sub: "Read-only", icon: TrendingUp, color: "text-blue-500", bg: "bg-blue-500/10" },
+                  { label: "Reserve Factor", value: `${reserveInput}%`, sub: "Read-only", icon: ShieldCheck, color: "text-purple-500", bg: "bg-purple-500/10" },
+                ].map((item) => (
+                  <div key={item.label} className="rounded-xl border border-border bg-muted/20 p-5">
+                    <div className="mb-4 flex items-center justify-between">
+                      <div className={`rounded-lg p-2 ${item.bg}`}>
+                        <item.icon className={`h-4 w-4 ${item.color}`} />
+                      </div>
+                      <span className="rounded-full border border-border bg-card px-2.5 py-1 text-xs text-muted-foreground">{item.sub}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mb-1">{item.label}</p>
+                    <p className="text-2xl font-semibold">{item.value}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h5 className="text-sm font-semibold">Collateral Liquidation Thresholds</h5>
+                  <span className="text-xs text-muted-foreground">Editable</span>
+                </div>
+                {state.assets.map((asset) => (
+                  <div key={asset.id} className="rounded-xl border border-border bg-muted/20 p-4 transition-colors hover:bg-muted/30">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                      <div className="flex min-w-36 items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-sm font-bold text-primary">
+                          {asset.symbol.slice(0, 3)}
+                        </div>
+                        <div>
+                          <p className="text-sm font-semibold">{asset.symbol}</p>
+                          <p className="text-xs text-muted-foreground">Current: {(asset.liquidationThresholdBps / 100).toFixed(2)}%</p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-1 items-end gap-3">
+                        <div className="flex-1">
+                          <p className="text-xs text-muted-foreground mb-1">Liquidation Threshold</p>
+                          <div className="relative">
+                            <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm font-semibold text-muted-foreground">%</span>
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="0.01"
+                              value={collateralThresholds[asset.id] || ""}
+                              onChange={(event) => handleThresholdInput(asset.id, event.target.value)}
+                              className="w-full rounded-lg border border-border bg-input-background px-3 py-2 pr-9 text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-ring"
+                            />
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => void handleThresholdUpdate(asset.id)}
+                          disabled={state.isBusy || updatingThresholdAsset === asset.id}
+                          className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {updatingThresholdAsset === asset.id ? "Updating..." : "Update"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">Borrow APY and reserve factor are read-only. Collateral thresholds update the on-chain liquidation risk calculations.</p>
             </div>
           )}
         </div>

@@ -108,7 +108,7 @@ export function LendingRouteView() {
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
             <ValueRow label="Collateral Value" value={`$${state.collateralValue.toFixed(2)}`} />
-            <ValueRow label="Max Borrow" value={`${state.maxBorrow.toFixed(2)} USDT`} />
+            <ValueRow label="Max Borrow" value={`${state.safeMaxBorrow.toFixed(2)} USDT`} />
             <ValueRow label="Health Factor" value={healthFactor} />
           </div>
           {state.needsCollateralApproval && <ActionButton disabled={!state.account || state.isBusy} busy={state.isBusy} onClick={state.approveCollateral}>Approve {state.selectedAsset.name}</ActionButton>}
