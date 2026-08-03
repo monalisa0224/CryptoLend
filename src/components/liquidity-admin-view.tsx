@@ -51,6 +51,8 @@ export function NewLiquidityAdminView() {
   const [isParameterNoticeClosing, setIsParameterNoticeClosing] = useState(false);
   const [updatingThresholdAsset, setUpdatingThresholdAsset] = useState<string | null>(null);
 
+  const [withdrawSource, setWithdrawSource] = useState<'reserve' | 'treasury'>('reserve');
+
   const liquidity = toNumber(poolLiquidity);
   const borrowed = toNumber(totalBorrowed);
   const available = Math.max(liquidity - borrowed, 0);
@@ -310,42 +312,127 @@ export function NewLiquidityAdminView() {
 
           {activeTab === "withdrawal" && (
             <div className="space-y-6">
-              <div className="bg-card rounded-xl border border-border p-5 space-y-5">
-                <div className="flex items-center gap-2">
-                  <div className="p-2 bg-blue-500/10 rounded-lg"><BarChart3 className="w-4 h-4 text-blue-500" /></div>
-                  <div>
-                    <h4 className="text-sm font-semibold">Protocol Reserve</h4>
-                    <p className="text-xs text-muted-foreground">Reserve earnings are managed by the treasury wallet</p>
-                  </div>
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Withdrawal Source</label>
+                <div className="relative w-full max-w-sm">
+                  <select
+                    value={withdrawSource}
+                    onChange={(e) => { playClickSound(); setWithdrawSource(e.target.value as 'reserve' | 'treasury'); }}
+                    className="w-full appearance-none px-4 py-2.5 pr-10 text-sm bg-muted/40 rounded-lg border border-border focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer"
+                  >
+                    <option value="reserve">Protocol Reserve Earnings</option>
+                    <option value="treasury">Company Treasury</option>
+                  </select>
+                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
                 </div>
-                <button
-                  onClick={() => { playClickSound(); void state.claimRewards(); }}
-                  disabled={state.isBusy || toNumber(state.position.pendingReward) <= 0}
-                  className="w-full py-3 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  Claim Rewards (${toNumber(state.position.pendingReward).toFixed(2)})
-                </button>
               </div>
 
-              <div className="bg-card rounded-xl border border-border p-5 space-y-5">
-                <div className="flex items-center gap-2">
-                  <div className="p-2 bg-purple-500/10 rounded-lg"><Building2 className="w-4 h-4 text-purple-500" /></div>
-                  <div>
-                    <h4 className="text-sm font-semibold">Treasury Staking</h4>
-                    <p className="text-xs text-muted-foreground">Manage staked position</p>
+              {/* ── Protocol Reserve Earnings ── */}
+              {withdrawSource === 'reserve' && (
+                <div className="bg-card rounded-xl border border-border p-5 space-y-5">
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 bg-blue-500/10 rounded-lg">
+                      <BarChart3 className="w-4 h-4 text-blue-500" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-semibold">Protocol Reserve Earnings</h4>
+                      <p className="text-xs text-muted-foreground">Revenue collected from borrower repayments via reserve factor</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                      <div className="p-4 bg-muted/30 rounded-xl">
+                        <p className="text-xs text-muted-foreground mb-1">Total Customer Repayments</p>
+                        <p className="text-xl font-semibold">$1,240,000</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">USDT</p>
+                      </div>
+                      <div className="p-4 bg-muted/30 rounded-xl">
+                        <p className="text-xs text-muted-foreground mb-1">Reserve Factor</p>
+                        <p className="text-xl font-semibold">10%</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">of repayments retained</p>
+                      </div>
+                      <div className="p-4 bg-muted/30 rounded-xl">
+                        <p className="text-xs text-muted-foreground mb-1">Total Reserve Collected</p>
+                        <p className="text-xl font-semibold">$124,000</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">USDT</p>
+                      </div>
+                    </div>
+
+                    <div className="p-3 bg-muted/20 rounded-lg text-xs text-muted-foreground">
+                      Total Reserve Collected = Total Customer Repayments × Reserve Factor = $1,240,000 × 10% = <span className="font-semibold text-foreground">$124,000 USDT</span>
+                    </div>
+
+                    <div className="border-t border-border" />
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="p-4 bg-green-500/5 border border-green-500/15 rounded-xl">
+                        <p className="text-xs text-muted-foreground mb-1">Total Reserve Claimed</p>
+                        <p className="text-xl font-semibold text-green-500">0</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">USDT</p>
+                      </div>
+                      <div className="p-4 bg-blue-500/5 border border-blue-500/15 rounded-xl">
+                        <p className="text-xs text-muted-foreground mb-1">Claimable Reserve Earnings</p>
+                        <p className="text-xl font-semibold text-blue-500">$0</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">USDT</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <button
+                    disabled
+                    className="w-full py-3 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  >
+                    <BarChart3 className="w-4 h-4" />
+                    Claim Reserve Earnings ($0)
+                  </button>
+                </div>
+              )}
+
+              {/* ── Company Treasury ── */}
+              {withdrawSource === 'treasury' && (
+                <div className="bg-card rounded-xl border border-border p-5 space-y-5">
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 bg-purple-500/10 rounded-lg">
+                      <Building2 className="w-4 h-4 text-purple-500" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-semibold">Company Treasury</h4>
+                      <p className="text-xs text-muted-foreground">Company-owned USDT staked in the lending pool</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="p-4 bg-muted/30 rounded-xl">
+                      <p className="text-xs text-muted-foreground mb-1">Deposited USDT</p>
+                      <p className="text-xl font-semibold">$0</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">USDT</p>
+                    </div>
+                    <div className="p-4 bg-green-500/5 border border-green-500/15 rounded-xl">
+                      <p className="text-xs text-muted-foreground mb-1">Interest Earned</p>
+                      <p className="text-xl font-semibold text-green-500">$0</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">USDT</p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      disabled
+                      className="py-3 text-sm rounded-xl border border-border hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-medium"
+                    >
+                      <Minus className="w-4 h-4" />
+                      Unstake ($0)
+                    </button>
+                    <button
+                      disabled
+                      className="py-3 text-sm rounded-xl bg-green-600 hover:bg-green-700 text-white font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      <Building2 className="w-4 h-4" />
+                      Claim Interest ($0)
+                    </button>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="p-4 bg-muted/30 rounded-xl">
-                    <p className="text-xs text-muted-foreground mb-1">Staked USDT</p>
-                    <p className="text-xl font-semibold">${toNumber(state.position.staked).toLocaleString()}</p>
-                  </div>
-                  <div className="p-4 bg-green-500/5 border border-green-500/15 rounded-xl">
-                    <p className="text-xs text-muted-foreground mb-1">Pending Rewards</p>
-                    <p className="text-xl font-semibold text-green-500">${toNumber(state.position.pendingReward).toFixed(2)}</p>
-                  </div>
-                </div>
-              </div>
+              )}
             </div>
           )}
 
