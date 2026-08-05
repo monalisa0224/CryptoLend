@@ -40,12 +40,10 @@ function ParameterNotice({ notice }: { notice: Notice }) {
 
 export function NewLiquidityAdminView() {
   const state = useDefi();
-  const { poolLiquidity, totalBorrowed, account, isDarkMode, isTreasury } = state;
+  const { poolLiquidity, totalBorrowed, account, isDarkMode, isTreasury, protocolReserveUsdt, minReserveUsdt, companyTreasury, stakingApyBps, reserveFactorBps, borrowApyBps, minLiquidityBufferBps } = state;
 
   const [activeTab, setActiveTab] = useState<Tab>("liquidity");
   const [depositInput, setDepositInput] = useState("");
-  const [reserveInput] = useState("10");
-  const [apyInput] = useState("12.5");
   const [collateralThresholds, setCollateralThresholds] = useState<Record<string, string>>({});
   const [parameterNotice, setParameterNotice] = useState<Notice | null>(null);
   const [isParameterNoticeClosing, setIsParameterNoticeClosing] = useState(false);
@@ -55,15 +53,34 @@ export function NewLiquidityAdminView() {
 
   const liquidity = toNumber(poolLiquidity);
   const borrowed = toNumber(totalBorrowed);
-  const available = Math.max(liquidity - borrowed, 0);
-  const utilPct = liquidity > 0 ? Math.min(Math.round((borrowed / liquidity) * 100), 100) : 0;
+  const reserved = toNumber(protocolReserveUsdt);
+  const usableLiquidity = Math.max(liquidity - reserved, 0);
+  const available = Math.max(usableLiquidity - borrowed, 0);
+  const utilPct = usableLiquidity > 0 ? Math.min(Math.round((borrowed / usableLiquidity) * 100), 100) : 0;
   const health = getPoolHealth(utilPct);
 
   const handleAddLiquidity = () => {
     playClickSound();
-    state.setLiquidityAmount(depositInput);
-    void state.addLiquidity();
+    void state.addLiquidity(depositInput);
     setDepositInput("");
+  };
+
+  const needsLiquidityApproval = depositInput ? toNumber(depositInput) > toNumber(state.usdtAllowance) : false;
+
+  const handleClaimReserve = () => {
+    playClickSound();
+    void state.withdrawReserve(state.companyTreasury.reserve);
+  };
+
+  const handleUnstakeTreasury = () => {
+    playClickSound();
+    state.setUnstakeAmount(state.companyTreasury.staked);
+    void state.unstake();
+  };
+
+  const handleClaimTreasuryInterest = () => {
+    playClickSound();
+    void state.claimRewards();
   };
 
   const handleThresholdInput = (assetId: string, value: string) => {
@@ -170,7 +187,7 @@ export function NewLiquidityAdminView() {
             { label: "Total Liquidity", value: `$${(liquidity / 1_000_000).toFixed(2)}M`, sub: "USDT deposited", icon: Droplets, color: "text-blue-500", bg: "bg-blue-500/10" },
             { label: "Available", value: `$${(available / 1_000_000).toFixed(2)}M`, sub: "Ready to borrow", icon: ShieldCheck, color: "text-green-500", bg: "bg-green-500/10" },
             { label: "Total Borrowed", value: `$${(borrowed / 1_000_000).toFixed(2)}M`, sub: "Outstanding loans", icon: TrendingUp, color: "text-orange-500", bg: "bg-orange-500/10" },
-            { label: "Borrow APY", value: `${apyInput}%`, sub: "Current rate", icon: Settings, color: "text-primary", bg: "bg-primary/10" },
+            { label: "Borrow APY", value: `${(toNumber(borrowApyBps) / 100).toFixed(2)}%`, sub: "Current rate", icon: Settings, color: "text-primary", bg: "bg-primary/10" },
           ].map((s) => (
             <div key={s.label} className="p-4 bg-muted/30 rounded-xl">
               <div className={`p-2 rounded-lg w-fit mb-2.5 ${s.bg}`}>
@@ -262,7 +279,7 @@ export function NewLiquidityAdminView() {
                     </div>
                     <div className="text-right">
                       <p className="text-xs text-muted-foreground uppercase tracking-wide">Supply APY</p>
-                      <p className="text-3xl font-bold text-green-500">8.5%</p>
+                      <p className="text-3xl font-bold text-green-500">{(toNumber(stakingApyBps) / 100).toFixed(2)}%</p>
                     </div>
                   </div>
                   <div className="relative mb-5">
@@ -277,14 +294,27 @@ export function NewLiquidityAdminView() {
                       className="w-full h-14 rounded-xl border border-border bg-muted/30 pl-28 pr-5 text-lg focus:outline-none focus:ring-2 focus:ring-ring"
                     />
                   </div>
-                  <button
-                    onClick={handleAddLiquidity}
-                    disabled={state.isBusy || !depositInput}
-                    className="w-full h-14 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                  >
-                    <Plus className="w-5 h-5" />
-                    {state.isBusy ? "Adding Liquidity..." : "Add Liquidity"}
-                  </button>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      onClick={() => { playClickSound(); void state.approveLiquidity(depositInput); }}
+                      disabled={state.isBusy || !depositInput || !needsLiquidityApproval}
+                      className="h-14 rounded-xl border border-border hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-semibold text-sm"
+                    >
+                      <ShieldCheck className="w-5 h-5" />
+                      {state.isBusy ? "Approving..." : "Approve USDT"}
+                    </button>
+                    <button
+                      onClick={handleAddLiquidity}
+                      disabled={state.isBusy || !depositInput || needsLiquidityApproval}
+                      className="h-14 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      <Plus className="w-5 h-5" />
+                      {state.isBusy ? "Adding Liquidity..." : "Add Liquidity"}
+                    </button>
+                  </div>
+                  {needsLiquidityApproval && (
+                    <p className="text-xs text-muted-foreground">Approve USDT first, then add liquidity.</p>
+                  )}
                 </div>
               </div>
 
@@ -343,48 +373,44 @@ export function NewLiquidityAdminView() {
                   <div className="space-y-4">
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                       <div className="p-4 bg-muted/30 rounded-xl">
-                        <p className="text-xs text-muted-foreground mb-1">Total Customer Repayments</p>
-                        <p className="text-xl font-semibold">$1,240,000</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">USDT</p>
-                      </div>
-                      <div className="p-4 bg-muted/30 rounded-xl">
                         <p className="text-xs text-muted-foreground mb-1">Reserve Factor</p>
-                        <p className="text-xl font-semibold">10%</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">of repayments retained</p>
+                        <p className="text-xl font-semibold">{(toNumber(reserveFactorBps) / 100).toFixed(1)}%</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">of borrower interest retained</p>
                       </div>
                       <div className="p-4 bg-muted/30 rounded-xl">
                         <p className="text-xs text-muted-foreground mb-1">Total Reserve Collected</p>
-                        <p className="text-xl font-semibold">$124,000</p>
+                        <p className="text-xl font-semibold">${toNumber(protocolReserveUsdt).toLocaleString()}</p>
                         <p className="text-xs text-muted-foreground mt-0.5">USDT</p>
+                      </div>
+                      <div className="p-4 bg-muted/30 rounded-xl">
+                        <p className="text-xs text-muted-foreground mb-1">Min Reserve Floor</p>
+                        <p className="text-xl font-semibold">${toNumber(minReserveUsdt).toLocaleString()}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">USDT kept as buffer</p>
                       </div>
                     </div>
 
                     <div className="p-3 bg-muted/20 rounded-lg text-xs text-muted-foreground">
-                      Total Reserve Collected = Total Customer Repayments × Reserve Factor = $1,240,000 × 10% = <span className="font-semibold text-foreground">$124,000 USDT</span>
+                      Reserve = Reserve Factor × interest from borrower repayments. Amount above the min reserve floor is claimable by the company treasury.
                     </div>
 
                     <div className="border-t border-border" />
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div className="p-4 bg-green-500/5 border border-green-500/15 rounded-xl">
-                        <p className="text-xs text-muted-foreground mb-1">Total Reserve Claimed</p>
-                        <p className="text-xl font-semibold text-green-500">0</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">USDT</p>
-                      </div>
+                    <div className="grid grid-cols-1 gap-3">
                       <div className="p-4 bg-blue-500/5 border border-blue-500/15 rounded-xl">
                         <p className="text-xs text-muted-foreground mb-1">Claimable Reserve Earnings</p>
-                        <p className="text-xl font-semibold text-blue-500">$0</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">USDT</p>
+                        <p className="text-xl font-semibold text-blue-500">${toNumber(companyTreasury.reserve).toLocaleString()}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">USDT above the min reserve floor</p>
                       </div>
                     </div>
                   </div>
 
                   <button
-                    disabled
+                    onClick={handleClaimReserve}
+                    disabled={state.isBusy || !isTreasury || toNumber(companyTreasury.reserve) <= 0}
                     className="w-full py-3 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
                     <BarChart3 className="w-4 h-4" />
-                    Claim Reserve Earnings ($0)
+                    {isTreasury ? `Claim Reserve Earnings ($${toNumber(companyTreasury.reserve).toLocaleString()})` : "Treasury wallet required"}
                   </button>
                 </div>
               )}
@@ -405,32 +431,37 @@ export function NewLiquidityAdminView() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="p-4 bg-muted/30 rounded-xl">
                       <p className="text-xs text-muted-foreground mb-1">Deposited USDT</p>
-                      <p className="text-xl font-semibold">$0</p>
+                      <p className="text-xl font-semibold">${toNumber(companyTreasury.staked).toLocaleString()}</p>
                       <p className="text-xs text-muted-foreground mt-0.5">USDT</p>
                     </div>
                     <div className="p-4 bg-green-500/5 border border-green-500/15 rounded-xl">
                       <p className="text-xs text-muted-foreground mb-1">Interest Earned</p>
-                      <p className="text-xl font-semibold text-green-500">$0</p>
+                      <p className="text-xl font-semibold text-green-500">${toNumber(companyTreasury.interest).toLocaleString()}</p>
                       <p className="text-xs text-muted-foreground mt-0.5">USDT</p>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
                     <button
-                      disabled
+                      onClick={handleUnstakeTreasury}
+                      disabled={state.isBusy || !isTreasury || toNumber(companyTreasury.staked) <= 0}
                       className="py-3 text-sm rounded-xl border border-border hover:bg-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-medium"
                     >
                       <Minus className="w-4 h-4" />
-                      Unstake ($0)
+                      Unstake (${toNumber(companyTreasury.staked).toLocaleString()})
                     </button>
                     <button
-                      disabled
+                      onClick={handleClaimTreasuryInterest}
+                      disabled={state.isBusy || !isTreasury || toNumber(companyTreasury.interest) <= 0}
                       className="py-3 text-sm rounded-xl bg-green-600 hover:bg-green-700 text-white font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
                       <Building2 className="w-4 h-4" />
-                      Claim Interest ($0)
+                      Claim Interest (${toNumber(companyTreasury.interest).toLocaleString()})
                     </button>
                   </div>
+                  {!isTreasury && (
+                    <p className="text-xs text-muted-foreground">Treasury wallet required to unstake and claim interest.</p>
+                  )}
                 </div>
               )}
             </div>
@@ -456,8 +487,10 @@ export function NewLiquidityAdminView() {
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 {[
-                  { label: "Borrow APY", value: `${apyInput}%`, sub: "Read-only", icon: TrendingUp, color: "text-blue-500", bg: "bg-blue-500/10" },
-                  { label: "Reserve Factor", value: `${reserveInput}%`, sub: "Read-only", icon: ShieldCheck, color: "text-purple-500", bg: "bg-purple-500/10" },
+                  { label: "Borrow APY", value: `${(toNumber(borrowApyBps) / 100).toFixed(2)}%`, sub: "Read-only", icon: TrendingUp, color: "text-blue-500", bg: "bg-blue-500/10" },
+                  { label: "Supply APY", value: `${(toNumber(stakingApyBps) / 100).toFixed(2)}%`, sub: "Read-only", icon: TrendingUp, color: "text-green-500", bg: "bg-green-500/10" },
+                  { label: "Reserve Factor", value: `${(toNumber(reserveFactorBps) / 100).toFixed(1)}%`, sub: "Read-only", icon: ShieldCheck, color: "text-purple-500", bg: "bg-purple-500/10" },
+                  { label: "Min Liquidity Buffer", value: `${(toNumber(minLiquidityBufferBps) / 100).toFixed(1)}%`, sub: "Read-only", icon: ShieldCheck, color: "text-amber-500", bg: "bg-amber-500/10" },
                 ].map((item) => (
                   <div key={item.label} className="rounded-xl border border-border bg-muted/20 p-5">
                     <div className="mb-4 flex items-center justify-between">
@@ -518,7 +551,7 @@ export function NewLiquidityAdminView() {
                   </div>
                 ))}
               </div>
-              <p className="text-xs text-muted-foreground">Borrow APY and reserve factor are read-only. Collateral thresholds update the on-chain liquidation risk calculations.</p>
+              <p className="text-xs text-muted-foreground">Borrow APY, supply APY, reserve factor and liquidity buffer are read-only. Collateral thresholds update the on-chain liquidation risk calculations.</p>
             </div>
           )}
         </div>

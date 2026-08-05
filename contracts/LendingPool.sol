@@ -35,6 +35,7 @@ contract LendingPool {
     uint256 public constant MAX_LTV_BPS = 7000;
     uint256 public constant INTEREST_BPS = 400;
     uint256 public constant STAKING_APY_BPS = 1200;
+    uint256 public constant RESERVE_FACTOR_BPS = 1000;
     uint256 public constant LIQUIDATION_CLOSE_FACTOR_BPS = 5000;
     uint256 public constant LIQUIDATION_BONUS_BPS = 500;
     uint256 public constant LIQUIDATION_HEALTH_FACTOR_BPS = 11000;
@@ -53,6 +54,9 @@ contract LendingPool {
     mapping(address => uint256) public lastRewardAt;
     uint256 public totalBorrowedUsdt;
     uint256 public totalStakedUsdt;
+    uint256 public protocolReserveUsdt;
+    uint256 public minReserveUsdt;
+    uint256 public minLiquidityBufferBps = 3000;
 
     event Borrowed(
         address indexed borrower,
@@ -62,6 +66,9 @@ contract LendingPool {
         uint256 maxBorrowUsdt
     );
     event LiquidityFunded(address indexed funder, uint256 amountUsdt);
+    event ProtocolReserveWithdrawn(address indexed treasury, uint256 amountUsdt);
+    event MinReserveUpdated(uint256 minReserveUsdt);
+    event LiquidityBufferUpdated(uint256 minLiquidityBufferBps);
     event CollateralAssetConfigured(bytes32 indexed assetId, address token, uint8 decimals, uint256 ltvBps, uint256 liquidationThresholdBps);
     event TokenBorrowed(address indexed borrower, bytes32 indexed assetId, uint256 collateralAmount, uint256 borrowAmountUsdt, uint256 collateralValueUsdt, uint256 maxBorrowUsdt);
     event Staked(address indexed investor, uint256 amountUsdt);
@@ -133,9 +140,21 @@ contract LendingPool {
         emit LiquidationThresholdUpdated(assetId, liquidationThresholdBps_);
     }
 
+    function setMinReserveUsdt(uint256 minReserveUsdt_) external onlyTreasury {
+        minReserveUsdt = minReserveUsdt_;
+        emit MinReserveUpdated(minReserveUsdt_);
+    }
+
+    function setMinLiquidityBufferBps(uint256 minLiquidityBufferBps_) external onlyTreasury {
+        require(minLiquidityBufferBps_ <= BPS_DENOMINATOR, "Invalid buffer");
+        minLiquidityBufferBps = minLiquidityBufferBps_;
+        emit LiquidityBufferUpdated(minLiquidityBufferBps_);
+    }
+
     function addLiquidity(uint256 usdtAmount) external onlyTreasury nonReentrant {
         require(usdtAmount > 0, "Liquidity required");
         require(mockUsdt.transferFrom(msg.sender, address(this), usdtAmount), "Liquidity transfer failed");
+        _stake(msg.sender, usdtAmount);
         emit LiquidityFunded(msg.sender, usdtAmount);
     }
 
@@ -202,6 +221,7 @@ contract LendingPool {
 
         uint256 interestPaid = amountUsdt > interest ? interest : amountUsdt;
         uint256 principalPaid = amountUsdt - interestPaid;
+        protocolReserveUsdt += (interestPaid * RESERVE_FACTOR_BPS) / BPS_DENOMINATOR;
 
         if (principalPaid > 0) {
             position.borrowedUsdt -= principalPaid;
@@ -220,6 +240,7 @@ contract LendingPool {
         uint256 interest = getAccruedInterestUsdt(msg.sender);
         uint256 principal = position.borrowedUsdt;
         uint256 totalDebt = principal + interest;
+        protocolReserveUsdt += (interest * RESERVE_FACTOR_BPS) / BPS_DENOMINATOR;
 
         require(mockUsdt.transferFrom(msg.sender, address(this), totalDebt), "Repay transfer failed");
 
@@ -263,6 +284,7 @@ contract LendingPool {
         uint256 interest = getAccruedInterestUsdt(borrower);
         uint256 interestPaid = amountUsdt > interest ? interest : amountUsdt;
         uint256 principalPaid = amountUsdt - interestPaid;
+        protocolReserveUsdt += (interestPaid * RESERVE_FACTOR_BPS) / BPS_DENOMINATOR;
 
         if (principalPaid > 0) {
             if (principalPaid >= position.borrowedUsdt) {
@@ -324,20 +346,22 @@ contract LendingPool {
 
     function stakeUsdt(uint256 amountUsdt) external nonReentrant {
         require(amountUsdt > 0, "Stake amount required");
+        require(mockUsdt.transferFrom(msg.sender, address(this), amountUsdt), "Stake transfer failed");
+        _stake(msg.sender, amountUsdt);
+    }
 
-        uint256 reward = pendingRewardUsdt(msg.sender);
+    function _stake(address user, uint256 amountUsdt) private {
+        uint256 reward = pendingRewardUsdt(user);
         if (reward > 0) {
             require(mockUsdt.balanceOf(address(this)) >= reward, "Reward reserve low");
-            require(mockUsdt.transfer(msg.sender, reward), "Reward transfer failed");
-            emit RewardClaimed(msg.sender, reward);
+            require(mockUsdt.transfer(user, reward), "Reward transfer failed");
+            emit RewardClaimed(user, reward);
         }
-
-        require(mockUsdt.transferFrom(msg.sender, address(this), amountUsdt), "Stake transfer failed");
-        stakedUsdt[msg.sender] += amountUsdt;
+        stakedUsdt[user] += amountUsdt;
         totalStakedUsdt += amountUsdt;
-        lastRewardAt[msg.sender] = block.timestamp;
+        lastRewardAt[user] = block.timestamp;
 
-        emit Staked(msg.sender, amountUsdt);
+        emit Staked(user, amountUsdt);
     }
 
     function unstakeUsdt(uint256 amountUsdt) external nonReentrant {
@@ -348,6 +372,10 @@ contract LendingPool {
         uint256 payout = amountUsdt + reward;
         require(mockUsdt.balanceOf(address(this)) >= payout, "Pool liquidity low");
 
+        if (msg.sender == treasury) {
+            _enforceLiquidityGuard(payout);
+        }
+
         stakedUsdt[msg.sender] -= amountUsdt;
         totalStakedUsdt -= amountUsdt;
         lastRewardAt[msg.sender] = block.timestamp;
@@ -357,6 +385,28 @@ contract LendingPool {
             emit RewardClaimed(msg.sender, reward);
         }
         emit Unstaked(msg.sender, amountUsdt);
+    }
+
+    function withdrawProtocolReserve(uint256 amountUsdt) external onlyTreasury nonReentrant {
+        require(amountUsdt > 0, "Withdraw amount required");
+        uint256 withdrawable = protocolReserveUsdt >= minReserveUsdt ? protocolReserveUsdt - minReserveUsdt : 0;
+        require(amountUsdt <= withdrawable, "Reserve floor breached");
+        _enforceLiquidityGuard(amountUsdt);
+
+        protocolReserveUsdt -= amountUsdt;
+        require(mockUsdt.transfer(msg.sender, amountUsdt), "Withdraw transfer failed");
+
+        emit ProtocolReserveWithdrawn(msg.sender, amountUsdt);
+    }
+
+    function _enforceLiquidityGuard(uint256 outflowUsdt) private view {
+        uint256 poolBalance = mockUsdt.balanceOf(address(this));
+        uint256 available = poolBalance >= protocolReserveUsdt ? poolBalance - protocolReserveUsdt : 0;
+        require(outflowUsdt <= available, "Withdrawal exceeds available liquidity");
+
+        uint256 availableAfter = available - outflowUsdt;
+        require(availableAfter >= totalBorrowedUsdt, "Withdrawal leaves pool unable to cover loans");
+        require(availableAfter >= (poolBalance * minLiquidityBufferBps) / BPS_DENOMINATOR, "Withdrawal breaches liquidity buffer");
     }
 
     function claimRewards() external nonReentrant {
@@ -474,7 +524,13 @@ contract LendingPool {
     }
 
     function getAvailableLiquidityUsdt() external view returns (uint256) {
-        return mockUsdt.balanceOf(address(this));
+        uint256 balance = mockUsdt.balanceOf(address(this));
+        return balance >= protocolReserveUsdt ? balance - protocolReserveUsdt : 0;
+    }
+
+    function getCompanyTreasuryUsdt() public view returns (uint256) {
+        uint256 withdrawableReserve = protocolReserveUsdt >= minReserveUsdt ? protocolReserveUsdt - minReserveUsdt : 0;
+        return stakedUsdt[treasury] + pendingRewardUsdt(treasury) + withdrawableReserve;
     }
 
     receive() external payable {}
