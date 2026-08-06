@@ -14,11 +14,11 @@
     "0x23618e81E3f5cdF7f54C3d65f7FBc0aBf5B21E8f",
     "0xa0Ee7A142d267C1f36714E4a8F75612F20a79720"
   ],
-  "mockUsdt": "0x986aaa537b8cc170761FDAC6aC4fc7F9d8a20A8C",
-  "mockBtc": "0xde2Bd2ffEA002b8E84ADeA96e5976aF664115E2c",
-  "mockSol": "0xefc1aB2475ACb7E60499Efb171D173be19928a05",
-  "priceOracle": "0x870526b7973b56163a6997bB7C886F5E4EA53638",
-  "lendingPool": "0xD49a0e9A4CD5979aE36840f542D2d7f02C4817Be",
+  "mockUsdt": "0x3aAde2dCD2Df6a8cAc689EE797591b2913658659",
+  "mockBtc": "0xab16A69A5a8c12C732e0DEFF4BE56A70bb64c926",
+  "mockSol": "0xE3011A37A904aB90C8881a99BD1F6E21401f1522",
+  "priceOracle": "0x1f10F3Ba7ACB61b2F50B9d6DdCf91a6f787C0E82",
+  "lendingPool": "0x457cCf29090fe5A24c19c1bc95F492168C0EaFdb",
   "assets": [
     {
       "id": "ETH",
@@ -36,7 +36,7 @@
       "symbol": "BTC",
       "coingeckoId": "bitcoin",
       "type": "erc20",
-      "address": "0xde2Bd2ffEA002b8E84ADeA96e5976aF664115E2c",
+      "address": "0xab16A69A5a8c12C732e0DEFF4BE56A70bb64c926",
       "decimals": 8,
       "ltvBps": 7000,
       "liquidationThresholdBps": 8500
@@ -47,7 +47,7 @@
       "symbol": "SOL",
       "coingeckoId": "solana",
       "type": "erc20",
-      "address": "0xefc1aB2475ACb7E60499Efb171D173be19928a05",
+      "address": "0xE3011A37A904aB90C8881a99BD1F6E21401f1522",
       "decimals": 9,
       "ltvBps": 6500,
       "liquidationThresholdBps": 8000
