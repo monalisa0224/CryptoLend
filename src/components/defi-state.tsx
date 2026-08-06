@@ -167,6 +167,7 @@ const LOCAL_RPC_URL = "http://127.0.0.1:8545";
 const STAKING_APY = 12;
 const GAS_BUFFER_ETH = 0.01;
 const SAFE_MAX_BORROW_BPS = 9950;
+const FULL_REPAY_TOLERANCE_USDT = 0.01;
 const TEMP_LIQUIDATION_THRESHOLDS_BPS: Record<string, number> = {
   ETH: 8500,
   BTC: 8500,
@@ -490,12 +491,11 @@ export function DefiProvider({ children }: { children: ReactNode }) {
       setStakingApyBps(apyBps.toString());
       setReserveFactorBps(factorBps.toString());
       setBorrowApyBps(interestBps.toString());
-      const reserveValue = Number(formatUnits(reserveRaw, 6));
-      const minReserveValue = Number(formatUnits(minReserveRaw, 6));
+      const claimableReserveRaw = reserveRaw >= minReserveRaw ? reserveRaw - minReserveRaw : BigInt(0);
       setCompanyTreasury({
         staked: Number(formatUnits(treasuryStakedRaw, 6)).toFixed(2),
         interest: Number(formatUnits(treasuryInterestRaw, 6)).toFixed(4),
-        reserve: Math.max(reserveValue - minReserveValue, 0).toFixed(2),
+        reserve: formatUnits(claimableReserveRaw, 6),
       });
       setProtocolStatus("Protocol data loaded from Hardhat local chain.");
     } catch {
@@ -842,10 +842,10 @@ export function DefiProvider({ children }: { children: ReactNode }) {
       const repayValue = toNumber(repaymentAmount);
       const interestDue = toNumber(position.accruedInterest);
       const totalDebt = toNumber(position.totalDebt);
-      const isFullRepayment = totalDebt > 0 && totalDebt - repayValue <= 0.000001;
+      const isFullRepayment = totalDebt > 0 && repayValue + FULL_REPAY_TOLERANCE_USDT >= totalDebt;
 
       if (!isFullRepayment && repayValue < interestDue) throw new Error(`Repay amount must cover accrued interest first. Interest due: ${position.accruedInterest} USDT.`);
-      if (repayValue > totalDebt + 0.000001) throw new Error("Repay amount exceeds your total debt.");
+      if (repayValue > totalDebt + FULL_REPAY_TOLERANCE_USDT) throw new Error("Repay amount exceeds your total debt.");
       if (repayValue > toNumber(usdtBalance)) throw new Error("Repay amount exceeds your wallet USDT balance.");
 
       const approvalAmount = isFullRepayment ? (totalDebt + 1).toFixed(6) : repaymentAmount;

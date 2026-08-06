@@ -23,6 +23,10 @@ function getPoolHealth(utilPct: number) {
   return { label: "Critical", desc: "Pool is over-utilised. Add liquidity immediately.", color: "bg-red-500/10 border-red-500/20", barColor: "bg-red-500", textColor: "text-red-600", Icon: XCircle };
 }
 
+function formatUsdtDisplay(value: string | number) {
+  return toNumber(String(value)).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 type Tab = "liquidity" | "withdrawal" | "parameters";
 type Notice = { tone: "success" | "error"; text: string };
 
@@ -54,6 +58,7 @@ export function NewLiquidityAdminView() {
   const liquidity = toNumber(poolLiquidity);
   const borrowed = toNumber(totalBorrowed);
   const reserved = toNumber(protocolReserveUsdt);
+  const claimableReserveDisplay = formatUsdtDisplay(companyTreasury.reserve);
   const usableLiquidity = Math.max(liquidity - reserved, 0);
   const available = Math.max(usableLiquidity - borrowed, 0);
   const utilPct = usableLiquidity > 0 ? Math.min(Math.round((borrowed / usableLiquidity) * 100), 100) : 0;
@@ -398,7 +403,7 @@ export function NewLiquidityAdminView() {
                     <div className="grid grid-cols-1 gap-3">
                       <div className="p-4 bg-blue-500/5 border border-blue-500/15 rounded-xl">
                         <p className="text-xs text-muted-foreground mb-1">Claimable Reserve Earnings</p>
-                        <p className="text-xl font-semibold text-blue-500">${toNumber(companyTreasury.reserve).toLocaleString()}</p>
+                        <p className="text-xl font-semibold text-blue-500">${claimableReserveDisplay}</p>
                         <p className="text-xs text-muted-foreground mt-0.5">USDT above the min reserve floor</p>
                       </div>
                     </div>
@@ -410,7 +415,7 @@ export function NewLiquidityAdminView() {
                     className="w-full py-3 text-sm rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
                     <BarChart3 className="w-4 h-4" />
-                    {isTreasury ? `Claim Reserve Earnings ($${toNumber(companyTreasury.reserve).toLocaleString()})` : "Treasury wallet required"}
+                    {isTreasury ? `Claim Reserve Earnings ($${claimableReserveDisplay})` : "Treasury wallet required"}
                   </button>
                 </div>
               )}

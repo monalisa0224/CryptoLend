@@ -436,8 +436,8 @@ contract LendingPool {
             return 0;
         }
 
-        uint256 elapsed = block.timestamp - position.updatedAt;
-        return (position.borrowedUsdt * INTEREST_BPS * elapsed) / (BPS_DENOMINATOR * YEAR_SECONDS);
+        uint256 elapsedDays = (block.timestamp - position.updatedAt) / 1 days;
+        return (position.borrowedUsdt * INTEREST_BPS * elapsedDays) / (BPS_DENOMINATOR * 365);
     }
 
     function getTotalDebtUsdt(address borrower) public view returns (uint256) {

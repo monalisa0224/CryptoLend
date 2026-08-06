@@ -181,6 +181,23 @@ describe("LendingPool", function () {
     expect(await lendingPool.totalBorrowedUsdt()).to.equal(0);
   });
 
+  it("accrues borrower interest by completed days only", async function () {
+    const { borrower, lendingPool, parseUsdt } = await loadFixture(deployFixture);
+
+    await lendingPool.connect(borrower).borrowWithEthCollateral(parseUsdt("1000"), { value: ethers.parseEther("15") });
+    await ethers.provider.send("evm_increaseTime", [23 * 60 * 60]);
+    await ethers.provider.send("evm_mine");
+    expect(await lendingPool.getAccruedInterestUsdt(borrower.address)).to.equal(0);
+
+    await ethers.provider.send("evm_increaseTime", [60 * 60]);
+    await ethers.provider.send("evm_mine");
+    expect(await lendingPool.getAccruedInterestUsdt(borrower.address)).to.equal(parseUsdt("0.109589"));
+
+    await ethers.provider.send("evm_increaseTime", [29 * 24 * 60 * 60]);
+    await ethers.provider.send("evm_mine");
+    expect(await lendingPool.getAccruedInterestUsdt(borrower.address)).to.equal(parseUsdt("3.287671"));
+  });
+
   it("rejects repayment that does not cover accrued interest", async function () {
     const { borrower, mockUsdt, lendingPool, parseUsdt } = await loadFixture(deployFixture);
 
