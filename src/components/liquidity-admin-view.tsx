@@ -79,8 +79,7 @@ export function NewLiquidityAdminView() {
 
   const handleUnstakeTreasury = () => {
     playClickSound();
-    state.setUnstakeAmount(state.companyTreasury.staked);
-    void state.unstake();
+    void state.unstake(state.companyTreasury.staked);
   };
 
   const handleClaimTreasuryInterest = () => {

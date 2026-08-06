@@ -150,10 +150,10 @@ type DefiContextType = {
   repayLoan: () => Promise<void>;
   repayFullLoan: () => Promise<void>;
   withdrawCollateral: () => Promise<void>;
-  approveStake: () => Promise<void>;
-  stake: () => Promise<void>;
+  approveStake: (amount?: string) => Promise<void>;
+  stake: (amount?: string) => Promise<void>;
   claimRewards: () => Promise<void>;
-  unstake: () => Promise<void>;
+  unstake: (amount?: string) => Promise<void>;
   approveLiquidity: (amount?: string) => Promise<void>;
   addLiquidity: (amount?: string) => Promise<void>;
   withdrawReserve: (amount: string) => Promise<void>;
@@ -588,11 +588,12 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     if (borrow > toNumber(poolLiquidity)) throw new Error("Borrow amount exceeds protocol USDT liquidity.");
   }, [borrowAmount, collateralAmount, ethBalance, poolLiquidity, position.borrowed, position.totalDebt, requireWallet, safeMaxBorrow, selectedAsset, selectedBalance, selectedLivePrice]);
 
-  const validateStake = useCallback(() => {
+  const validateStake = useCallback((amountValue?: string) => {
+    const amount = amountValue ?? stakeAmount;
     requireWallet();
-    if (!isPositiveDecimal(stakeAmount)) throw new Error("Stake amount must be a valid number greater than 0.");
-    if (decimalPlaces(stakeAmount) > 6) throw new Error("USDT stake amount supports up to 6 decimal places.");
-    if (toNumber(stakeAmount) > toNumber(usdtBalance)) throw new Error("Stake amount exceeds your wallet USDT balance.");
+    if (!isPositiveDecimal(amount)) throw new Error("Stake amount must be a valid number greater than 0.");
+    if (decimalPlaces(amount) > 6) throw new Error("USDT stake amount supports up to 6 decimal places.");
+    if (toNumber(amount) > toNumber(usdtBalance)) throw new Error("Stake amount exceeds your wallet USDT balance.");
   }, [requireWallet, stakeAmount, usdtBalance]);
 
   const validateLiquidity = useCallback((amountValue?: string) => {
@@ -934,14 +935,15 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     }
   }, [getBrowserProvider, refreshBalances, showError, validateWithdrawCollateral]);
 
-  const approveStake = useCallback(async () => {
+  const approveStake = useCallback(async (amount?: string) => {
     try {
       setError("");
       setStatus("");
       setIsBusy(true);
-      validateStake();
+      const amountValue = amount ?? stakeAmount;
+      validateStake(amountValue);
       setStatus("USDT approval submitted. Waiting for confirmation...");
-      await approveUsdt(stakeAmount);
+      await approveUsdt(amountValue);
       setStatus("USDT approved. You can now stake.");
     } catch (caught) {
       showError(caught instanceof Error ? caught.message : "Approval failed.");
@@ -950,20 +952,21 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     }
   }, [approveUsdt, showError, stakeAmount, validateStake]);
 
-  const stake = useCallback(async () => {
+  const stake = useCallback(async (amount?: string) => {
     try {
       setError("");
       setStatus("");
       setIsBusy(true);
-      validateStake();
-      if (needsStakeApproval) throw new Error("Please approve USDT before staking.");
+      const amountValue = amount ?? stakeAmount;
+      validateStake(amountValue);
+      if (toNumber(amountValue) > toNumber(usdtAllowance)) throw new Error("Please approve USDT before staking.");
       const provider = await getBrowserProvider();
       const signer = await provider.getSigner();
       const pool = new Contract(DEPLOYMENT.lendingPool, LENDING_POOL_ABI, signer);
-      const tx = await pool.stakeUsdt(parseUnits(stakeAmount, 6));
+      const tx = await pool.stakeUsdt(parseUnits(amountValue, 6));
       setStatus("Stake transaction submitted. Waiting for confirmation...");
       const receipt = await tx.wait();
-      await fetch("/api/staking-history", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ walletAddress: await signer.getAddress(), action: "STAKE", amount: stakeAmount, rewardAmount: "0", txHash: receipt.hash }) });
+      await fetch("/api/staking-history", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ walletAddress: await signer.getAddress(), action: "STAKE", amount: amountValue, rewardAmount: "0", txHash: receipt.hash }) });
       setStatus("Stake successful. Your USDT is now earning rewards.");
       await refreshBalances(await signer.getAddress());
       await refreshStakingHistory();
@@ -972,7 +975,7 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsBusy(false);
     }
-  }, [getBrowserProvider, needsStakeApproval, refreshBalances, refreshStakingHistory, showError, stakeAmount, validateStake]);
+  }, [getBrowserProvider, refreshBalances, refreshStakingHistory, showError, stakeAmount, usdtAllowance, validateStake]);
 
   const claimRewards = useCallback(async () => {
     try {
@@ -999,17 +1002,18 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     }
   }, [getBrowserProvider, position.pendingReward, refreshBalances, refreshStakingHistory, requireWallet, showError]);
 
-  const unstake = useCallback(async () => {
+  const unstake = useCallback(async (amount?: string) => {
     try {
       setError("");
       setStatus("");
       setIsBusy(true);
+      const amountValue = amount ?? unstakeAmount;
       requireWallet();
-      if (!isPositiveDecimal(unstakeAmount)) throw new Error("Unstake amount must be a valid number greater than 0.");
-      if (decimalPlaces(unstakeAmount) > 6) throw new Error("USDT unstake amount supports up to 6 decimal places.");
-      if (toNumber(unstakeAmount) > toNumber(position.staked)) throw new Error("Unstake amount exceeds your staked USDT.");
+      if (!isPositiveDecimal(amountValue)) throw new Error("Unstake amount must be a valid number greater than 0.");
+      if (decimalPlaces(amountValue) > 6) throw new Error("USDT unstake amount supports up to 6 decimal places.");
+      if (toNumber(amountValue) > toNumber(position.staked)) throw new Error("Unstake amount exceeds your staked USDT.");
       if (isTreasury) {
-        const outflow = toNumber(unstakeAmount) + toNumber(position.pendingReward);
+        const outflow = toNumber(amountValue) + toNumber(position.pendingReward);
         const poolBalance = toNumber(poolLiquidity);
         const available = Math.max(poolBalance - toNumber(protocolReserveUsdt), 0);
         const availableAfter = available - outflow;
@@ -1020,10 +1024,10 @@ export function DefiProvider({ children }: { children: ReactNode }) {
       const provider = await getBrowserProvider();
       const signer = await provider.getSigner();
       const pool = new Contract(DEPLOYMENT.lendingPool, LENDING_POOL_ABI, signer);
-      const tx = await pool.unstakeUsdt(parseUnits(unstakeAmount, 6));
+      const tx = await pool.unstakeUsdt(parseUnits(amountValue, 6));
       setStatus("Unstake transaction submitted. Waiting for confirmation...");
       const receipt = await tx.wait();
-      await fetch("/api/staking-history", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ walletAddress: await signer.getAddress(), action: "UNSTAKE", amount: unstakeAmount, rewardAmount: rewardBefore, txHash: receipt.hash }) });
+      await fetch("/api/staking-history", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ walletAddress: await signer.getAddress(), action: "UNSTAKE", amount: amountValue, rewardAmount: rewardBefore, txHash: receipt.hash }) });
       setStatus("Unstake successful. Principal and rewards returned.");
       await refreshBalances(await signer.getAddress());
       await refreshStakingHistory();

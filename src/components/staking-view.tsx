@@ -35,6 +35,7 @@ export function NewStakingView() {
   const [stakeInput, setStakeInput] = useState("");
   const [stakeModalOpen, setStakeModalOpen] = useState(false);
   const [isStaking, setIsStaking] = useState(false);
+  const [isApproving, setIsApproving] = useState(false);
   const [isUnstaking, setIsUnstaking] = useState(false);
   const [isClaiming, setIsClaiming] = useState(false);
 
@@ -45,22 +46,28 @@ export function NewStakingView() {
   const unclaimedRewards = toNumber(state.position.pendingReward);
   const walletUsdt = toNumber(state.usdtBalance);
   const poolLiquidity = toNumber(state.poolLiquidity);
+  const needsStakeApproval = stakeInput ? toNumber(stakeInput) > toNumber(state.usdtAllowance) : false;
 
   const handleStake = async () => {
     if (!state.account) return;
     setIsStaking(true);
-    state.setStakeAmount(stakeInput);
-    await state.stake();
+    await state.stake(stakeInput);
     setIsStaking(false);
     setStakeModalOpen(false);
     setStakeInput("");
   };
 
+  const handleApprove = async () => {
+    if (!state.account) return;
+    setIsApproving(true);
+    await state.approveStake(stakeInput);
+    setIsApproving(false);
+  };
+
   const handleUnstake = async () => {
     if (stakedBalance <= 0) return;
     setIsUnstaking(true);
-    state.setUnstakeAmount(String(stakedBalance));
-    await state.unstake();
+    await state.unstake(String(stakedBalance));
     setIsUnstaking(false);
   };
 
@@ -214,13 +221,25 @@ export function NewStakingView() {
               </div>
             </div>
 
-            <button
-              onClick={handleStake}
-              disabled={isStaking || state.isBusy || stakeAmount <= 0}
-              className="w-full py-3.5 bg-primary text-primary-foreground rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isStaking ? "Staking…" : `Stake${stakeAmount > 0 ? ` ${stakeAmount.toLocaleString()} USDT` : ""}`}
-            </button>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={handleApprove}
+                disabled={isApproving || state.isBusy || stakeAmount <= 0 || !needsStakeApproval}
+                className="py-3.5 rounded-xl border border-border font-medium hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isApproving ? "Approving…" : "Approve USDT"}
+              </button>
+              <button
+                onClick={handleStake}
+                disabled={isStaking || state.isBusy || stakeAmount <= 0 || needsStakeApproval}
+                className="py-3.5 bg-primary text-primary-foreground rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isStaking ? "Staking…" : `Stake${stakeAmount > 0 ? ` ${stakeAmount.toLocaleString()} USDT` : ""}`}
+              </button>
+            </div>
+            {needsStakeApproval && (
+              <p className="text-xs text-muted-foreground">Approve USDT first, then stake.</p>
+            )}
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
