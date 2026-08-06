@@ -139,7 +139,7 @@ async function main() {
     constants: {
       maxLtvBps: "7000",
       interestBps: "400",
-      stakingApyBps: "1200",
+      stakingApyBps: "350",
       usdtDecimals: 6
     }
   };

@@ -5,7 +5,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { ArrowLeft, Lock, TrendingUp, Wallet, Gift, Droplets, CircleDollarSign, X } from "lucide-react";
 import { playClickSound, toNumber, useDefi } from "@/components/defi-state";
 
-const USDT_APY = 12;
+const USDT_APY = 3.5;
 
 function UsdtIcon({ size = 40 }: { size?: number }) {
   return (

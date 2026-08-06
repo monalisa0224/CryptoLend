@@ -378,14 +378,14 @@ describe("LendingPool", function () {
     await ethers.provider.send("evm_mine");
 
     const reward = await lendingPool.pendingRewardUsdt(borrower.address);
-    expect(reward).to.be.greaterThanOrEqual(parseUsdt("120"));
-    expect(reward).to.be.lessThan(parseUsdt("120.01"));
+    expect(reward).to.be.greaterThanOrEqual(parseUsdt("35"));
+    expect(reward).to.be.lessThan(parseUsdt("35.01"));
 
     await expect(lendingPool.connect(borrower).claimRewards()).to.emit(lendingPool, "RewardClaimed");
 
     const borrowerBalance = await mockUsdt.balanceOf(borrower.address);
-    expect(borrowerBalance).to.be.greaterThanOrEqual(parseUsdt("9120"));
-    expect(borrowerBalance).to.be.lessThan(parseUsdt("9120.01"));
+    expect(borrowerBalance).to.be.greaterThanOrEqual(parseUsdt("9035"));
+    expect(borrowerBalance).to.be.lessThan(parseUsdt("9035.01"));
   });
 
   it("lets an investor unstake principal and rewards", async function () {
@@ -402,8 +402,8 @@ describe("LendingPool", function () {
     expect(await lendingPool.stakedUsdt(borrower.address)).to.equal(0);
     expect(await lendingPool.totalStakedUsdt()).to.equal(0);
     const borrowerBalance = await mockUsdt.balanceOf(borrower.address);
-    expect(borrowerBalance).to.be.greaterThanOrEqual(parseUsdt("10120"));
-    expect(borrowerBalance).to.be.lessThan(parseUsdt("10120.01"));
+    expect(borrowerBalance).to.be.greaterThanOrEqual(parseUsdt("10035"));
+    expect(borrowerBalance).to.be.lessThan(parseUsdt("10035.01"));
   });
 
   it("accumulates protocol reserve from repayUsdt interest", async function () {
@@ -514,8 +514,8 @@ describe("LendingPool", function () {
     await ethers.provider.send("evm_increaseTime", [365 * 24 * 60 * 60]);
     await ethers.provider.send("evm_mine");
 
-    expect(await lendingPool.pendingRewardUsdt(deployer.address)).to.equal(parseUsdt("120"));
-    expect(await lendingPool.getCompanyTreasuryUsdt()).to.equal(parseUsdt("1120"));
+    expect(await lendingPool.pendingRewardUsdt(deployer.address)).to.equal(parseUsdt("35"));
+    expect(await lendingPool.getCompanyTreasuryUsdt()).to.equal(parseUsdt("1035"));
   });
 
   it("excludes the protocol reserve from available liquidity", async function () {

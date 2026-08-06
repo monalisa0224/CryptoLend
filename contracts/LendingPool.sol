@@ -34,7 +34,7 @@ contract LendingPool {
     uint256 public constant ETH_DECIMALS = 1e18;
     uint256 public constant MAX_LTV_BPS = 7000;
     uint256 public constant INTEREST_BPS = 400;
-    uint256 public constant STAKING_APY_BPS = 1200;
+    uint256 public constant STAKING_APY_BPS = 350;
     uint256 public constant RESERVE_FACTOR_BPS = 1000;
     uint256 public constant LIQUIDATION_CLOSE_FACTOR_BPS = 5000;
     uint256 public constant LIQUIDATION_BONUS_BPS = 500;

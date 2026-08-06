@@ -164,7 +164,7 @@ const DefiContext = createContext<DefiContextType | null>(null);
 const HARDHAT_CHAIN_ID = 31337;
 const HARDHAT_CHAIN_HEX = "0x7a69";
 const LOCAL_RPC_URL = "http://127.0.0.1:8545";
-const STAKING_APY = 12;
+const STAKING_APY = 3.5;
 const GAS_BUFFER_ETH = 0.01;
 const SAFE_MAX_BORROW_BPS = 9950;
 const FULL_REPAY_TOLERANCE_USDT = 0.01;
@@ -257,7 +257,7 @@ export function DefiProvider({ children }: { children: ReactNode }) {
   const [minReserveUsdt, setMinReserveUsdt] = useState("0");
   const [minLiquidityBufferBps, setMinLiquidityBufferBps] = useState("3000");
   const [companyTreasury, setCompanyTreasury] = useState({ staked: "0", interest: "0", reserve: "0" });
-  const [stakingApyBps, setStakingApyBps] = useState("1200");
+  const [stakingApyBps, setStakingApyBps] = useState("350");
   const [reserveFactorBps, setReserveFactorBps] = useState("1000");
   const [borrowApyBps, setBorrowApyBps] = useState("400");
   const [protocolStatus, setProtocolStatus] = useState("Connect Hardhat node to load protocol data.");
@@ -1123,7 +1123,7 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     setMinReserveUsdt("0");
     setMinLiquidityBufferBps("3000");
     setCompanyTreasury({ staked: "0", interest: "0", reserve: "0" });
-    setStakingApyBps("1200");
+    setStakingApyBps("350");
     setReserveFactorBps("1000");
     setBorrowApyBps("400");
     setStatus("");
