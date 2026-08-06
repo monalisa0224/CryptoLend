@@ -57,7 +57,7 @@ flowchart LR
 - Price: `1 ETH = 100 mUSDT`.
 - Max LTV: `70%`.
 - Interest constant exposed: `4%` (`INTEREST_BPS = 400`).
-- Staking APY: `12%` (`STAKING_APY_BPS = 1200`).
+- Staking APY: `3.5%` (`STAKING_APY_BPS = 350`).
 
 Core formulas from contract:
 
@@ -66,7 +66,7 @@ Core formulas from contract:
 - Max borrow (mUSDT):
   - `(collateralValue * 7000) / 10000`
 - Pending reward:
-  - `(principal * 1200 * elapsedSeconds) / (10000 * 365 days)`
+  - `(principal * 350 * elapsedSeconds) / (10000 * 365 days)`
 
 ## Directory Responsibilities
 

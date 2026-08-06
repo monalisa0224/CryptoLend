@@ -37,6 +37,7 @@ const COLLATERAL_ICONS = {
   BTC: BtcIcon,
   SOL: SolIcon,
 };
+const REPAY_DISPLAY_TOLERANCE_USDT = 0.01;
 
 function formatUsd(value: number) {
   if (value <= 0) return "-";
@@ -66,7 +67,9 @@ export function NewLendingView() {
   const totalDebt = toNumber(state.position.borrowed) + toNumber(state.position.accruedInterest);
   const hasActiveBorrowing = toNumber(state.position.borrowed) > 0 || toNumber(state.position.totalDebt) > 0;
   const repayAmt = toNumber(repayInput);
-  const remainingDebt = Math.max(0, totalDebt - repayAmt);
+  const repayExceedsDisplayTolerance = repayAmt > totalDebt + REPAY_DISPLAY_TOLERANCE_USDT;
+  const isFullRepayPreview = repayAmt > 0 && repayAmt + REPAY_DISPLAY_TOLERANCE_USDT >= totalDebt;
+  const remainingDebt = isFullRepayPreview ? 0 : Math.max(0, totalDebt - repayAmt);
   const newHealthFactor = remainingDebt > 0 ? (toNumber(state.position.collateral) * state.selectedLivePrice) / remainingDebt : 0;
 
   const handleBorrowClick = () => {
@@ -370,7 +373,7 @@ export function NewLendingView() {
                 </div>
               </div>
 
-              {repayAmt > 0 && repayAmt <= totalDebt && (
+              {repayAmt > 0 && !repayExceedsDisplayTolerance && (
                 <div className="flex items-center gap-4 text-sm pb-0.5">
                   <div className="text-right">
                     <p className="text-xs text-muted-foreground mb-0.5">Remaining Debt</p>
@@ -398,14 +401,14 @@ export function NewLendingView() {
 
               <button
                 onClick={handleRepayClick}
-                disabled={state.isBusy || repayAmt <= 0 || repayAmt > totalDebt}
+                disabled={state.isBusy || repayAmt <= 0 || repayExceedsDisplayTolerance}
                 className="shrink-0 px-5 py-2.5 bg-primary text-primary-foreground text-sm rounded-lg font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Repay
               </button>
             </div>
 
-            {repayAmt > totalDebt && (
+            {repayExceedsDisplayTolerance && (
               <div className="flex items-center gap-1.5 mt-2 text-xs text-red-500">
                 <CircleAlert className="w-3.5 h-3.5 flex-shrink-0" />
                 Amount exceeds total debt of ${totalDebt.toFixed(2)}

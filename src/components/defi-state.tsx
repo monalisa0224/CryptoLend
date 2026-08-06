@@ -127,6 +127,13 @@ type DefiContextType = {
   totalBorrowed: string;
   totalStaked: string;
   protocolStatus: string;
+  protocolReserveUsdt: string;
+  minReserveUsdt: string;
+  minLiquidityBufferBps: string;
+  companyTreasury: { staked: string; interest: string; reserve: string };
+  stakingApyBps: string;
+  reserveFactorBps: string;
+  borrowApyBps: string;
   tokenCollateral: Record<string, string>;
   position: Position;
   borrowHistory: BorrowHistory[];
@@ -143,12 +150,13 @@ type DefiContextType = {
   repayLoan: () => Promise<void>;
   repayFullLoan: () => Promise<void>;
   withdrawCollateral: () => Promise<void>;
-  approveStake: () => Promise<void>;
-  stake: () => Promise<void>;
+  approveStake: (amount?: string) => Promise<void>;
+  stake: (amount?: string) => Promise<void>;
   claimRewards: () => Promise<void>;
-  unstake: () => Promise<void>;
-  approveLiquidity: () => Promise<void>;
-  addLiquidity: () => Promise<void>;
+  unstake: (amount?: string) => Promise<void>;
+  approveLiquidity: (amount?: string) => Promise<void>;
+  addLiquidity: (amount?: string) => Promise<void>;
+  withdrawReserve: (amount: string) => Promise<void>;
 };
 
 const DefiContext = createContext<DefiContextType | null>(null);
@@ -156,9 +164,10 @@ const DefiContext = createContext<DefiContextType | null>(null);
 const HARDHAT_CHAIN_ID = 31337;
 const HARDHAT_CHAIN_HEX = "0x7a69";
 const LOCAL_RPC_URL = "http://127.0.0.1:8545";
-const STAKING_APY = 12;
+const STAKING_APY = 3.5;
 const GAS_BUFFER_ETH = 0.01;
 const SAFE_MAX_BORROW_BPS = 9950;
+const FULL_REPAY_TOLERANCE_USDT = 0.01;
 const TEMP_LIQUIDATION_THRESHOLDS_BPS: Record<string, number> = {
   ETH: 8500,
   BTC: 8500,
@@ -244,6 +253,13 @@ export function DefiProvider({ children }: { children: ReactNode }) {
   const [poolCollateral, setPoolCollateral] = useState("0");
   const [totalBorrowed, setTotalBorrowed] = useState("0");
   const [totalStaked, setTotalStaked] = useState("0");
+  const [protocolReserveUsdt, setProtocolReserveUsdt] = useState("0");
+  const [minReserveUsdt, setMinReserveUsdt] = useState("0");
+  const [minLiquidityBufferBps, setMinLiquidityBufferBps] = useState("3000");
+  const [companyTreasury, setCompanyTreasury] = useState({ staked: "0", interest: "0", reserve: "0" });
+  const [stakingApyBps, setStakingApyBps] = useState("350");
+  const [reserveFactorBps, setReserveFactorBps] = useState("1000");
+  const [borrowApyBps, setBorrowApyBps] = useState("400");
   const [protocolStatus, setProtocolStatus] = useState("Connect Hardhat node to load protocol data.");
   const [position, setPosition] = useState<Position>({ collateral: "0", borrowed: "0", accruedInterest: "0", totalDebt: "0", staked: "0", pendingReward: "0" });
   const [selectedAssetId, setSelectedAssetId] = useState("ETH");
@@ -448,16 +464,39 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     try {
       const provider = new JsonRpcProvider(LOCAL_RPC_URL);
       const pool = new Contract(DEPLOYMENT.lendingPool, LENDING_POOL_ABI, provider);
-      const [liquidityRaw, poolEth, borrowedRaw, stakedRaw] = await Promise.all([
+      const [liquidityRaw, poolEth, borrowedRaw, stakedRaw, reserveRaw, minReserveRaw, bufferBps, treasuryAddress, apyBps, factorBps, interestBps] = await Promise.all([
         pool.getPoolLiquidityUsdt(),
         provider.getBalance(DEPLOYMENT.lendingPool),
         pool.totalBorrowedUsdt(),
         pool.totalStakedUsdt(),
+        pool.protocolReserveUsdt(),
+        pool.minReserveUsdt(),
+        pool.minLiquidityBufferBps(),
+        pool.treasury(),
+        pool.STAKING_APY_BPS(),
+        pool.RESERVE_FACTOR_BPS(),
+        pool.INTEREST_BPS(),
+      ]);
+      const [treasuryStakedRaw, treasuryInterestRaw] = await Promise.all([
+        pool.stakedUsdt(treasuryAddress),
+        pool.pendingRewardUsdt(treasuryAddress),
       ]);
       setPoolLiquidity(Number(formatUnits(liquidityRaw, 6)).toFixed(2));
       setPoolCollateral(Number(formatEther(poolEth)).toFixed(4));
       setTotalBorrowed(Number(formatUnits(borrowedRaw, 6)).toFixed(2));
       setTotalStaked(Number(formatUnits(stakedRaw, 6)).toFixed(2));
+      setProtocolReserveUsdt(Number(formatUnits(reserveRaw, 6)).toFixed(2));
+      setMinReserveUsdt(Number(formatUnits(minReserveRaw, 6)).toFixed(2));
+      setMinLiquidityBufferBps(bufferBps.toString());
+      setStakingApyBps(apyBps.toString());
+      setReserveFactorBps(factorBps.toString());
+      setBorrowApyBps(interestBps.toString());
+      const claimableReserveRaw = reserveRaw >= minReserveRaw ? reserveRaw - minReserveRaw : BigInt(0);
+      setCompanyTreasury({
+        staked: Number(formatUnits(treasuryStakedRaw, 6)).toFixed(2),
+        interest: Number(formatUnits(treasuryInterestRaw, 6)).toFixed(4),
+        reserve: formatUnits(claimableReserveRaw, 6),
+      });
       setProtocolStatus("Protocol data loaded from Hardhat local chain.");
     } catch {
       setProtocolStatus("Hardhat node is not reachable. Run npm.cmd run hardhat:node and npm.cmd run deploy:local.");
@@ -549,19 +588,21 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     if (borrow > toNumber(poolLiquidity)) throw new Error("Borrow amount exceeds protocol USDT liquidity.");
   }, [borrowAmount, collateralAmount, ethBalance, poolLiquidity, position.borrowed, position.totalDebt, requireWallet, safeMaxBorrow, selectedAsset, selectedBalance, selectedLivePrice]);
 
-  const validateStake = useCallback(() => {
+  const validateStake = useCallback((amountValue?: string) => {
+    const amount = amountValue ?? stakeAmount;
     requireWallet();
-    if (!isPositiveDecimal(stakeAmount)) throw new Error("Stake amount must be a valid number greater than 0.");
-    if (decimalPlaces(stakeAmount) > 6) throw new Error("USDT stake amount supports up to 6 decimal places.");
-    if (toNumber(stakeAmount) > toNumber(usdtBalance)) throw new Error("Stake amount exceeds your wallet USDT balance.");
+    if (!isPositiveDecimal(amount)) throw new Error("Stake amount must be a valid number greater than 0.");
+    if (decimalPlaces(amount) > 6) throw new Error("USDT stake amount supports up to 6 decimal places.");
+    if (toNumber(amount) > toNumber(usdtBalance)) throw new Error("Stake amount exceeds your wallet USDT balance.");
   }, [requireWallet, stakeAmount, usdtBalance]);
 
-  const validateLiquidity = useCallback(() => {
+  const validateLiquidity = useCallback((amountValue?: string) => {
+    const amount = amountValue ?? liquidityAmount;
     requireWallet();
     if (!isTreasury) throw new Error("Only the treasury wallet can add liquidity.");
-    if (!isPositiveDecimal(liquidityAmount)) throw new Error("Liquidity amount must be a valid number greater than 0.");
-    if (decimalPlaces(liquidityAmount) > 6) throw new Error("USDT liquidity amount supports up to 6 decimal places.");
-    if (toNumber(liquidityAmount) > toNumber(usdtBalance)) throw new Error(`Liquidity amount exceeds treasury wallet USDT balance. Wallet has ${usdtBalance} USDT.`);
+    if (!isPositiveDecimal(amount)) throw new Error("Liquidity amount must be a valid number greater than 0.");
+    if (decimalPlaces(amount) > 6) throw new Error("USDT liquidity amount supports up to 6 decimal places.");
+    if (toNumber(amount) > toNumber(usdtBalance)) throw new Error(`Liquidity amount exceeds treasury wallet USDT balance. Wallet has ${usdtBalance} USDT.`);
   }, [isTreasury, liquidityAmount, requireWallet, usdtBalance]);
 
   const validateRepay = useCallback(() => {
@@ -802,10 +843,10 @@ export function DefiProvider({ children }: { children: ReactNode }) {
       const repayValue = toNumber(repaymentAmount);
       const interestDue = toNumber(position.accruedInterest);
       const totalDebt = toNumber(position.totalDebt);
-      const isFullRepayment = totalDebt > 0 && totalDebt - repayValue <= 0.000001;
+      const isFullRepayment = totalDebt > 0 && repayValue + FULL_REPAY_TOLERANCE_USDT >= totalDebt;
 
       if (!isFullRepayment && repayValue < interestDue) throw new Error(`Repay amount must cover accrued interest first. Interest due: ${position.accruedInterest} USDT.`);
-      if (repayValue > totalDebt + 0.000001) throw new Error("Repay amount exceeds your total debt.");
+      if (repayValue > totalDebt + FULL_REPAY_TOLERANCE_USDT) throw new Error("Repay amount exceeds your total debt.");
       if (repayValue > toNumber(usdtBalance)) throw new Error("Repay amount exceeds your wallet USDT balance.");
 
       const approvalAmount = isFullRepayment ? (totalDebt + 1).toFixed(6) : repaymentAmount;
@@ -894,14 +935,15 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     }
   }, [getBrowserProvider, refreshBalances, showError, validateWithdrawCollateral]);
 
-  const approveStake = useCallback(async () => {
+  const approveStake = useCallback(async (amount?: string) => {
     try {
       setError("");
       setStatus("");
       setIsBusy(true);
-      validateStake();
+      const amountValue = amount ?? stakeAmount;
+      validateStake(amountValue);
       setStatus("USDT approval submitted. Waiting for confirmation...");
-      await approveUsdt(stakeAmount);
+      await approveUsdt(amountValue);
       setStatus("USDT approved. You can now stake.");
     } catch (caught) {
       showError(caught instanceof Error ? caught.message : "Approval failed.");
@@ -910,20 +952,21 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     }
   }, [approveUsdt, showError, stakeAmount, validateStake]);
 
-  const stake = useCallback(async () => {
+  const stake = useCallback(async (amount?: string) => {
     try {
       setError("");
       setStatus("");
       setIsBusy(true);
-      validateStake();
-      if (needsStakeApproval) throw new Error("Please approve USDT before staking.");
+      const amountValue = amount ?? stakeAmount;
+      validateStake(amountValue);
+      if (toNumber(amountValue) > toNumber(usdtAllowance)) throw new Error("Please approve USDT before staking.");
       const provider = await getBrowserProvider();
       const signer = await provider.getSigner();
       const pool = new Contract(DEPLOYMENT.lendingPool, LENDING_POOL_ABI, signer);
-      const tx = await pool.stakeUsdt(parseUnits(stakeAmount, 6));
+      const tx = await pool.stakeUsdt(parseUnits(amountValue, 6));
       setStatus("Stake transaction submitted. Waiting for confirmation...");
       const receipt = await tx.wait();
-      await fetch("/api/staking-history", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ walletAddress: await signer.getAddress(), action: "STAKE", amount: stakeAmount, rewardAmount: "0", txHash: receipt.hash }) });
+      await fetch("/api/staking-history", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ walletAddress: await signer.getAddress(), action: "STAKE", amount: amountValue, rewardAmount: "0", txHash: receipt.hash }) });
       setStatus("Stake successful. Your USDT is now earning rewards.");
       await refreshBalances(await signer.getAddress());
       await refreshStakingHistory();
@@ -932,7 +975,7 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsBusy(false);
     }
-  }, [getBrowserProvider, needsStakeApproval, refreshBalances, refreshStakingHistory, showError, stakeAmount, validateStake]);
+  }, [getBrowserProvider, refreshBalances, refreshStakingHistory, showError, stakeAmount, usdtAllowance, validateStake]);
 
   const claimRewards = useCallback(async () => {
     try {
@@ -959,23 +1002,32 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     }
   }, [getBrowserProvider, position.pendingReward, refreshBalances, refreshStakingHistory, requireWallet, showError]);
 
-  const unstake = useCallback(async () => {
+  const unstake = useCallback(async (amount?: string) => {
     try {
       setError("");
       setStatus("");
       setIsBusy(true);
+      const amountValue = amount ?? unstakeAmount;
       requireWallet();
-      if (!isPositiveDecimal(unstakeAmount)) throw new Error("Unstake amount must be a valid number greater than 0.");
-      if (decimalPlaces(unstakeAmount) > 6) throw new Error("USDT unstake amount supports up to 6 decimal places.");
-      if (toNumber(unstakeAmount) > toNumber(position.staked)) throw new Error("Unstake amount exceeds your staked USDT.");
+      if (!isPositiveDecimal(amountValue)) throw new Error("Unstake amount must be a valid number greater than 0.");
+      if (decimalPlaces(amountValue) > 6) throw new Error("USDT unstake amount supports up to 6 decimal places.");
+      if (toNumber(amountValue) > toNumber(position.staked)) throw new Error("Unstake amount exceeds your staked USDT.");
+      if (isTreasury) {
+        const outflow = toNumber(amountValue) + toNumber(position.pendingReward);
+        const poolBalance = toNumber(poolLiquidity);
+        const available = Math.max(poolBalance - toNumber(protocolReserveUsdt), 0);
+        const availableAfter = available - outflow;
+        if (availableAfter < toNumber(totalBorrowed)) throw new Error("Unstake would leave the pool unable to cover outstanding loans.");
+        if (availableAfter < (poolBalance * toNumber(minLiquidityBufferBps)) / 10000) throw new Error("Unstake would breach the pool liquidity buffer.");
+      }
       const rewardBefore = position.pendingReward;
       const provider = await getBrowserProvider();
       const signer = await provider.getSigner();
       const pool = new Contract(DEPLOYMENT.lendingPool, LENDING_POOL_ABI, signer);
-      const tx = await pool.unstakeUsdt(parseUnits(unstakeAmount, 6));
+      const tx = await pool.unstakeUsdt(parseUnits(amountValue, 6));
       setStatus("Unstake transaction submitted. Waiting for confirmation...");
       const receipt = await tx.wait();
-      await fetch("/api/staking-history", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ walletAddress: await signer.getAddress(), action: "UNSTAKE", amount: unstakeAmount, rewardAmount: rewardBefore, txHash: receipt.hash }) });
+      await fetch("/api/staking-history", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ walletAddress: await signer.getAddress(), action: "UNSTAKE", amount: amountValue, rewardAmount: rewardBefore, txHash: receipt.hash }) });
       setStatus("Unstake successful. Principal and rewards returned.");
       await refreshBalances(await signer.getAddress());
       await refreshStakingHistory();
@@ -984,16 +1036,17 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsBusy(false);
     }
-  }, [getBrowserProvider, position.pendingReward, position.staked, refreshBalances, refreshStakingHistory, requireWallet, showError, unstakeAmount]);
+  }, [getBrowserProvider, isTreasury, minLiquidityBufferBps, poolLiquidity, position.pendingReward, position.staked, protocolReserveUsdt, refreshBalances, refreshStakingHistory, requireWallet, showError, totalBorrowed, unstakeAmount]);
 
-  const approveLiquidity = useCallback(async () => {
+  const approveLiquidity = useCallback(async (amount?: string) => {
     try {
       setError("");
       setStatus("");
       setIsBusy(true);
-      validateLiquidity();
+      const amountValue = amount ?? liquidityAmount;
+      validateLiquidity(amountValue);
       setStatus("Liquidity approval submitted. Waiting for confirmation...");
-      await approveUsdt(liquidityAmount);
+      await approveUsdt(amountValue);
       setStatus("USDT approved for liquidity funding.");
     } catch (caught) {
       showError(caught instanceof Error ? caught.message : "Liquidity approval failed.");
@@ -1002,17 +1055,18 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     }
   }, [approveUsdt, liquidityAmount, showError, validateLiquidity]);
 
-  const addLiquidity = useCallback(async () => {
+  const addLiquidity = useCallback(async (amount?: string) => {
     try {
       setError("");
       setStatus("");
       setIsBusy(true);
-      validateLiquidity();
-      if (toNumber(liquidityAmount) > toNumber(usdtAllowance)) throw new Error("Approve USDT before adding liquidity.");
+      const amountValue = amount ?? liquidityAmount;
+      validateLiquidity(amountValue);
+      if (toNumber(amountValue) > toNumber(usdtAllowance)) throw new Error("Approve USDT before adding liquidity.");
       const provider = await getBrowserProvider();
       const signer = await provider.getSigner();
       const pool = new Contract(DEPLOYMENT.lendingPool, LENDING_POOL_ABI, signer);
-      const tx = await pool.addLiquidity(parseUnits(liquidityAmount, 6));
+      const tx = await pool.addLiquidity(parseUnits(amountValue, 6));
       setStatus("Add liquidity transaction submitted. Waiting for confirmation...");
       await tx.wait();
       setStatus("Liquidity added to the protocol.");
@@ -1023,6 +1077,35 @@ export function DefiProvider({ children }: { children: ReactNode }) {
       setIsBusy(false);
     }
   }, [getBrowserProvider, liquidityAmount, refreshBalances, showError, usdtAllowance, validateLiquidity]);
+
+  const withdrawReserve = useCallback(
+    async (amount: string) => {
+      try {
+        setError("");
+        setStatus("");
+        setIsBusy(true);
+        requireWallet();
+        if (!isTreasury) throw new Error("Only the company treasury wallet can withdraw reserve earnings.");
+        if (!isPositiveDecimal(amount)) throw new Error("Withdraw amount must be a valid number greater than 0.");
+        if (decimalPlaces(amount) > 6) throw new Error("USDT withdraw amount supports up to 6 decimal places.");
+        if (toNumber(amount) > toNumber(companyTreasury.reserve)) throw new Error(`Claimable reserve is ${companyTreasury.reserve} USDT.`);
+        const provider = await getBrowserProvider();
+        const signer = await provider.getSigner();
+        const pool = new Contract(DEPLOYMENT.lendingPool, LENDING_POOL_ABI, signer);
+        const tx = await pool.withdrawProtocolReserve(parseUnits(amount, 6));
+        setStatus("Reserve withdrawal submitted. Waiting for confirmation...");
+        await tx.wait();
+        setStatus("Reserve earnings withdrawn to the company treasury.");
+        await refreshProtocol();
+        await refreshBalances(await signer.getAddress());
+      } catch (caught) {
+        showError(caught instanceof Error ? caught.message : "Reserve withdrawal failed.");
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [companyTreasury.reserve, getBrowserProvider, isTreasury, refreshBalances, refreshProtocol, requireWallet, showError],
+  );
 
   const disconnectWallet = useCallback(() => {
     setAccount("");
@@ -1036,6 +1119,13 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     setRepayHistory([]);
     setStakingHistory([]);
     setPosition({ collateral: "0", borrowed: "0", accruedInterest: "0", totalDebt: "0", staked: "0", pendingReward: "0" });
+    setProtocolReserveUsdt("0");
+    setMinReserveUsdt("0");
+    setMinLiquidityBufferBps("3000");
+    setCompanyTreasury({ staked: "0", interest: "0", reserve: "0" });
+    setStakingApyBps("350");
+    setReserveFactorBps("1000");
+    setBorrowApyBps("400");
     setStatus("");
     setError("");
   }, []);
@@ -1176,6 +1266,13 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     totalBorrowed,
     totalStaked,
     protocolStatus,
+    protocolReserveUsdt,
+    minReserveUsdt,
+    minLiquidityBufferBps,
+    companyTreasury,
+    stakingApyBps,
+    reserveFactorBps,
+    borrowApyBps,
     tokenCollateral,
     position,
     borrowHistory,
@@ -1198,6 +1295,7 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     unstake,
     approveLiquidity,
     addLiquidity,
+    withdrawReserve,
   };
 
   return <DefiContext.Provider value={value}>{children}</DefiContext.Provider>;

@@ -147,7 +147,7 @@ export function StakingRouteView() {
           </div>
           <Input label="Stake Amount (USDT)" value={state.stakeAmount} onChange={state.setStakeAmount} />
           <div className="mb-4 grid gap-3 sm:grid-cols-3">
-            <ValueRow label="APY" value="12%" />
+            <ValueRow label="APY" value="3.5%" />
             <ValueRow label="Est. Daily Reward" value={`${state.dailyReward.toFixed(4)} USDT`} />
             <ValueRow label="Est. Yearly Reward" value={`${state.yearlyReward.toFixed(2)} USDT`} />
           </div>
@@ -201,7 +201,7 @@ export function DashboardProtocolView() {
           <StatCard label="Total Liquidity" value={`$${(liquidity / 1_000_000).toFixed(2)}M`} sub="USDT" />
           <StatCard label="Available to Borrow" value={`$${(available / 1_000_000).toFixed(2)}M`} sub="USDT" valueClass="text-green-600" />
           <StatCard label="Total Borrowed" value={`$${(borrowed / 1_000_000).toFixed(2)}M`} sub="USDT" valueClass="text-orange-600" />
-          <StatCard label="Borrow APY" value="12.5%" sub="Variable" valueClass="text-emerald-600" />
+          <StatCard label="Borrow APY" value="4.0%" sub="Variable" valueClass="text-emerald-600" />
         </div>
         <div>
           <div className={`mb-2 flex items-center justify-between text-sm ${isDarkMode ? "text-slate-300" : "text-slate-500"}`}><span>Pool Utilisation</span><span>{utilPct}%</span></div>
@@ -262,7 +262,7 @@ export function DashboardTransactionsView() {
           </div>
           <div className={`mb-4 overflow-hidden rounded-xl border ${isDarkMode ? "border-slate-700" : "border-slate-200"}`}>
             <div className={`flex justify-between border-b px-4 py-3 ${isDarkMode ? "border-slate-700" : "border-slate-200"}`}><span className={isDarkMode ? "text-slate-300" : "text-slate-600"}>Pool</span><span className={`font-semibold ${isDarkMode ? "text-slate-100" : "text-slate-900"}`}>USDT Liquidity Pool</span></div>
-            <div className="flex justify-between px-4 py-3"><span className={isDarkMode ? "text-slate-300" : "text-slate-600"}>APY</span><span className="font-semibold text-green-600">12.5%</span></div>
+            <div className="flex justify-between px-4 py-3"><span className={isDarkMode ? "text-slate-300" : "text-slate-600"}>APY</span><span className="font-semibold text-green-600">3.5%</span></div>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <button onClick={() => void state.claimRewards()} disabled={!state.account || state.isBusy || toNumber(state.position.pendingReward) <= 0} className="rounded-xl bg-green-500 px-4 py-3 text-base font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300">Claim Rewards</button>

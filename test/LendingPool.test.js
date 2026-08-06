@@ -181,6 +181,23 @@ describe("LendingPool", function () {
     expect(await lendingPool.totalBorrowedUsdt()).to.equal(0);
   });
 
+  it("accrues borrower interest by completed days only", async function () {
+    const { borrower, lendingPool, parseUsdt } = await loadFixture(deployFixture);
+
+    await lendingPool.connect(borrower).borrowWithEthCollateral(parseUsdt("1000"), { value: ethers.parseEther("15") });
+    await ethers.provider.send("evm_increaseTime", [23 * 60 * 60]);
+    await ethers.provider.send("evm_mine");
+    expect(await lendingPool.getAccruedInterestUsdt(borrower.address)).to.equal(0);
+
+    await ethers.provider.send("evm_increaseTime", [60 * 60]);
+    await ethers.provider.send("evm_mine");
+    expect(await lendingPool.getAccruedInterestUsdt(borrower.address)).to.equal(parseUsdt("0.109589"));
+
+    await ethers.provider.send("evm_increaseTime", [29 * 24 * 60 * 60]);
+    await ethers.provider.send("evm_mine");
+    expect(await lendingPool.getAccruedInterestUsdt(borrower.address)).to.equal(parseUsdt("3.287671"));
+  });
+
   it("rejects repayment that does not cover accrued interest", async function () {
     const { borrower, mockUsdt, lendingPool, parseUsdt } = await loadFixture(deployFixture);
 
@@ -361,14 +378,14 @@ describe("LendingPool", function () {
     await ethers.provider.send("evm_mine");
 
     const reward = await lendingPool.pendingRewardUsdt(borrower.address);
-    expect(reward).to.be.greaterThanOrEqual(parseUsdt("120"));
-    expect(reward).to.be.lessThan(parseUsdt("120.01"));
+    expect(reward).to.be.greaterThanOrEqual(parseUsdt("35"));
+    expect(reward).to.be.lessThan(parseUsdt("35.01"));
 
     await expect(lendingPool.connect(borrower).claimRewards()).to.emit(lendingPool, "RewardClaimed");
 
     const borrowerBalance = await mockUsdt.balanceOf(borrower.address);
-    expect(borrowerBalance).to.be.greaterThanOrEqual(parseUsdt("9120"));
-    expect(borrowerBalance).to.be.lessThan(parseUsdt("9120.01"));
+    expect(borrowerBalance).to.be.greaterThanOrEqual(parseUsdt("9035"));
+    expect(borrowerBalance).to.be.lessThan(parseUsdt("9035.01"));
   });
 
   it("lets an investor unstake principal and rewards", async function () {
@@ -385,7 +402,169 @@ describe("LendingPool", function () {
     expect(await lendingPool.stakedUsdt(borrower.address)).to.equal(0);
     expect(await lendingPool.totalStakedUsdt()).to.equal(0);
     const borrowerBalance = await mockUsdt.balanceOf(borrower.address);
-    expect(borrowerBalance).to.be.greaterThanOrEqual(parseUsdt("10120"));
-    expect(borrowerBalance).to.be.lessThan(parseUsdt("10120.01"));
+    expect(borrowerBalance).to.be.greaterThanOrEqual(parseUsdt("10035"));
+    expect(borrowerBalance).to.be.lessThan(parseUsdt("10035.01"));
+  });
+
+  it("accumulates protocol reserve from repayUsdt interest", async function () {
+    const { borrower, mockUsdt, lendingPool, parseUsdt } = await loadFixture(deployFixture);
+
+    await lendingPool.connect(borrower).borrowWithEthCollateral(parseUsdt("0.7"), { value: ethers.parseEther("0.01") });
+    await ethers.provider.send("evm_increaseTime", [365 * 24 * 60 * 60]);
+    await ethers.provider.send("evm_mine");
+
+    const totalDebt = await lendingPool.getTotalDebtUsdt(borrower.address);
+    await mockUsdt.connect(borrower).approve(await lendingPool.getAddress(), totalDebt);
+    await lendingPool.connect(borrower).repayUsdt(totalDebt);
+
+    expect(await lendingPool.protocolReserveUsdt()).to.equal(parseUsdt("0.0028"));
+  });
+
+  it("accumulates protocol reserve from repayFullLoan interest", async function () {
+    const { borrower, mockUsdt, lendingPool, parseUsdt } = await loadFixture(deployFixture);
+
+    await lendingPool.connect(borrower).borrowWithEthCollateral(parseUsdt("0.7"), { value: ethers.parseEther("0.01") });
+    await ethers.provider.send("evm_increaseTime", [365 * 24 * 60 * 60]);
+    await ethers.provider.send("evm_mine");
+
+    const totalDebt = await lendingPool.getTotalDebtUsdt(borrower.address);
+    await mockUsdt.connect(borrower).approve(await lendingPool.getAddress(), totalDebt + parseUsdt("1"));
+    await lendingPool.connect(borrower).repayFullLoan();
+
+    expect(await lendingPool.protocolReserveUsdt()).to.equal(parseUsdt("0.0028"));
+  });
+
+  it("accumulates protocol reserve from liquidation interest", async function () {
+    const { deployer, borrower, mockUsdt, priceOracle, lendingPool, parseUsdt, assetId } = await loadFixture(deployFixture);
+
+    await lendingPool.connect(borrower).borrowWithEthCollateral(parseUsdt("0.7"), { value: ethers.parseEther("0.01") });
+    await priceOracle.setPriceUsdt(assetId("ETH"), parseUsdt("90"));
+    await ethers.provider.send("evm_increaseTime", [365 * 24 * 60 * 60]);
+    await ethers.provider.send("evm_mine");
+
+    await mockUsdt.connect(deployer).approve(await lendingPool.getAddress(), parseUsdt("0.35"));
+    await lendingPool.connect(deployer).liquidate(borrower.address, assetId("ETH"), parseUsdt("0.35"));
+
+    expect(await lendingPool.protocolReserveUsdt()).to.equal(parseUsdt("0.0028"));
+  });
+
+  it("lets the treasury withdraw claimable reserve earnings", async function () {
+    const { deployer, borrower, mockUsdt, lendingPool, parseUsdt } = await loadFixture(deployFixture);
+
+    await lendingPool.connect(borrower).borrowWithEthCollateral(parseUsdt("0.7"), { value: ethers.parseEther("0.01") });
+    await ethers.provider.send("evm_increaseTime", [365 * 24 * 60 * 60]);
+    await ethers.provider.send("evm_mine");
+
+    const totalDebt = await lendingPool.getTotalDebtUsdt(borrower.address);
+    await mockUsdt.connect(borrower).approve(await lendingPool.getAddress(), totalDebt + parseUsdt("1"));
+    await lendingPool.connect(borrower).repayFullLoan();
+
+    await expect(lendingPool.connect(deployer).withdrawProtocolReserve(parseUsdt("0.0028"))).to.emit(lendingPool, "ProtocolReserveWithdrawn");
+    expect(await lendingPool.protocolReserveUsdt()).to.equal(0);
+  });
+
+  it("rejects reserve withdrawal that breaches the min reserve floor", async function () {
+    const { deployer, borrower, mockUsdt, lendingPool, parseUsdt } = await loadFixture(deployFixture);
+
+    await lendingPool.connect(borrower).borrowWithEthCollateral(parseUsdt("0.7"), { value: ethers.parseEther("0.01") });
+    await ethers.provider.send("evm_increaseTime", [365 * 24 * 60 * 60]);
+    await ethers.provider.send("evm_mine");
+
+    const totalDebt = await lendingPool.getTotalDebtUsdt(borrower.address);
+    await mockUsdt.connect(borrower).approve(await lendingPool.getAddress(), totalDebt + parseUsdt("1"));
+    await lendingPool.connect(borrower).repayFullLoan();
+
+    await expect(
+      lendingPool.connect(deployer).withdrawProtocolReserve(parseUsdt("0.0029"))
+    ).to.be.revertedWith("Reserve floor breached");
+  });
+
+  it("rejects non-treasury reserve withdrawal", async function () {
+    const { borrower, lendingPool, parseUsdt } = await loadFixture(deployFixture);
+
+    await expect(lendingPool.connect(borrower).withdrawProtocolReserve(parseUsdt("1"))).to.be.revertedWith("Not treasury");
+  });
+
+  it("only lets the treasury update min reserve and liquidity buffer", async function () {
+    const { deployer, borrower, lendingPool, parseUsdt } = await loadFixture(deployFixture);
+
+    await expect(lendingPool.connect(deployer).setMinReserveUsdt(parseUsdt("100")))
+      .to.emit(lendingPool, "MinReserveUpdated")
+      .withArgs(parseUsdt("100"));
+    expect(await lendingPool.minReserveUsdt()).to.equal(parseUsdt("100"));
+
+    await expect(lendingPool.connect(deployer).setMinLiquidityBufferBps(5000))
+      .to.emit(lendingPool, "LiquidityBufferUpdated")
+      .withArgs(5000n);
+    expect(await lendingPool.minLiquidityBufferBps()).to.equal(5000n);
+
+    await expect(lendingPool.connect(borrower).setMinReserveUsdt(parseUsdt("1"))).to.be.revertedWith("Not treasury");
+    await expect(lendingPool.connect(borrower).setMinLiquidityBufferBps(5000)).to.be.revertedWith("Not treasury");
+  });
+
+  it("addLiquidity stakes the treasury and reports company treasury value", async function () {
+    const { deployer, mockUsdt, lendingPool, parseUsdt } = await loadFixture(deployFixture);
+
+    await mockUsdt.approve(await lendingPool.getAddress(), parseUsdt("1000"));
+    await lendingPool.connect(deployer).addLiquidity(parseUsdt("1000"));
+
+    expect(await lendingPool.stakedUsdt(deployer.address)).to.equal(parseUsdt("1000"));
+    expect(await lendingPool.totalStakedUsdt()).to.equal(parseUsdt("1000"));
+
+    await ethers.provider.send("evm_increaseTime", [365 * 24 * 60 * 60]);
+    await ethers.provider.send("evm_mine");
+
+    expect(await lendingPool.pendingRewardUsdt(deployer.address)).to.equal(parseUsdt("35"));
+    expect(await lendingPool.getCompanyTreasuryUsdt()).to.equal(parseUsdt("1035"));
+  });
+
+  it("excludes the protocol reserve from available liquidity", async function () {
+    const { borrower, mockUsdt, lendingPool, parseUsdt } = await loadFixture(deployFixture);
+
+    await lendingPool.connect(borrower).borrowWithEthCollateral(parseUsdt("0.7"), { value: ethers.parseEther("0.01") });
+    await ethers.provider.send("evm_increaseTime", [365 * 24 * 60 * 60]);
+    await ethers.provider.send("evm_mine");
+
+    const totalDebt = await lendingPool.getTotalDebtUsdt(borrower.address);
+    await mockUsdt.connect(borrower).approve(await lendingPool.getAddress(), totalDebt + parseUsdt("1"));
+    await lendingPool.connect(borrower).repayFullLoan();
+
+    const poolBalance = await mockUsdt.balanceOf(await lendingPool.getAddress());
+    expect(await lendingPool.getAvailableLiquidityUsdt()).to.equal(poolBalance - parseUsdt("0.0028"));
+  });
+
+  it("rejects a treasury unstake that breaches the liquidity buffer", async function () {
+    const { deployer, mockUsdt, lendingPool, parseUsdt } = await loadFixture(deployFixture);
+
+    await mockUsdt.approve(await lendingPool.getAddress(), parseUsdt("1000"));
+    await lendingPool.connect(deployer).addLiquidity(parseUsdt("1000"));
+    await lendingPool.connect(deployer).setMinLiquidityBufferBps(9500);
+
+    await expect(lendingPool.connect(deployer).unstakeUsdt(parseUsdt("1000"))).to.be.revertedWith("Withdrawal breaches liquidity buffer");
+  });
+
+  it("rejects a treasury unstake that leaves the pool unable to cover loans", async function () {
+    const { deployer, borrower, mockUsdt, lendingPool, parseUsdt } = await loadFixture(deployFixture);
+
+    await mockUsdt.approve(await lendingPool.getAddress(), parseUsdt("100"));
+    await lendingPool.connect(deployer).addLiquidity(parseUsdt("100"));
+
+    await lendingPool.connect(borrower).borrowWithEthCollateral(parseUsdt("4000"), { value: ethers.parseEther("60") });
+
+    await expect(lendingPool.connect(deployer).unstakeUsdt(parseUsdt("100"))).to.be.revertedWith("Withdrawal leaves pool unable to cover loans");
+  });
+
+  it("lets an investor unstake even when the pool is heavily borrowed", async function () {
+    const { deployer, borrower, liquidator, mockUsdt, lendingPool, parseUsdt } = await loadFixture(deployFixture);
+
+    await mockUsdt.approve(await lendingPool.getAddress(), parseUsdt("100"));
+    await lendingPool.connect(deployer).addLiquidity(parseUsdt("100"));
+    await lendingPool.connect(borrower).borrowWithEthCollateral(parseUsdt("4000"), { value: ethers.parseEther("60") });
+
+    await mockUsdt.connect(liquidator).approve(await lendingPool.getAddress(), parseUsdt("100"));
+    await lendingPool.connect(liquidator).stakeUsdt(parseUsdt("100"));
+
+    await expect(lendingPool.connect(liquidator).unstakeUsdt(parseUsdt("100"))).to.emit(lendingPool, "Unstaked");
+    expect(await lendingPool.stakedUsdt(liquidator.address)).to.equal(0);
   });
 });
