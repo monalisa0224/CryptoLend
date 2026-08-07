@@ -234,8 +234,10 @@ export function DashboardTransactionsView() {
   const { isDarkMode } = state;
   if (!state.account) return <WalletConnectionPrompt title="Connect Your Wallet" message="Please connect your wallet to access transaction dashboard" icon={<Wallet className="h-14 w-14" />} />;
   const totalDebt = toNumber(state.position.borrowed) + toNumber(state.position.accruedInterest);
-  const collateralUsd = toNumber(state.position.collateral) * 100;
+  const collateralUsd = toNumber(state.totalCollateralValueUsdt);
   const healthFactor = totalDebt > 0 ? collateralUsd / totalDebt : 0;
+  const stakingApy = toNumber(state.stakingApyBps) / 100;
+  const borrowApy = toNumber(state.borrowApyBps) / 100;
 
   return (
     <div className="space-y-7">
@@ -244,7 +246,7 @@ export function DashboardTransactionsView() {
         <p className={`mb-6 text-lg ${isDarkMode ? "text-slate-300" : "text-slate-600"}`}>All your active positions in one place</p>
         <div className="grid gap-6 sm:grid-cols-4">
           <div><p className={`text-sm ${isDarkMode ? "text-slate-300" : "text-slate-500"}`}>Total Value</p><p className={`text-3xl font-semibold ${isDarkMode ? "text-slate-100" : "text-slate-900"}`}>${Math.round(state.portfolioValue).toLocaleString()}</p></div>
-          <div><p className={`text-sm ${isDarkMode ? "text-slate-300" : "text-slate-500"}`}>Borrowed USDT</p><p className={`text-3xl font-semibold ${isDarkMode ? "text-slate-100" : "text-slate-900"}`}>{toNumber(state.position.borrowed) > 0 ? "1" : "0"}</p></div>
+          <div><p className={`text-sm ${isDarkMode ? "text-slate-300" : "text-slate-500"}`}>Borrowed USDT</p><p className={`text-3xl font-semibold ${isDarkMode ? "text-slate-100" : "text-slate-900"}`}>${toNumber(state.position.borrowed).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p></div>
           <div><p className={`text-sm ${isDarkMode ? "text-slate-300" : "text-slate-500"}`}>Staked USDT</p><p className={`text-3xl font-semibold ${isDarkMode ? "text-slate-100" : "text-slate-900"}`}>${toNumber(state.position.staked).toLocaleString()}</p></div>
           <div><p className={`text-sm ${isDarkMode ? "text-slate-300" : "text-slate-500"}`}>Unclaimed Rewards</p><p className={`text-3xl font-semibold ${isDarkMode ? "text-slate-100" : "text-slate-900"}`}>${toNumber(state.position.pendingReward).toFixed(2)}</p></div>
         </div>
@@ -262,7 +264,7 @@ export function DashboardTransactionsView() {
           </div>
           <div className={`mb-4 overflow-hidden rounded-xl border ${isDarkMode ? "border-slate-700" : "border-slate-200"}`}>
             <div className={`flex justify-between border-b px-4 py-3 ${isDarkMode ? "border-slate-700" : "border-slate-200"}`}><span className={isDarkMode ? "text-slate-300" : "text-slate-600"}>Pool</span><span className={`font-semibold ${isDarkMode ? "text-slate-100" : "text-slate-900"}`}>USDT Liquidity Pool</span></div>
-            <div className="flex justify-between px-4 py-3"><span className={isDarkMode ? "text-slate-300" : "text-slate-600"}>APY</span><span className="font-semibold text-green-600">3.5%</span></div>
+            <div className="flex justify-between px-4 py-3"><span className={isDarkMode ? "text-slate-300" : "text-slate-600"}>APY</span><span className="font-semibold text-green-600">{stakingApy.toFixed(2)}%</span></div>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <button onClick={() => void state.claimRewards()} disabled={!state.account || state.isBusy || toNumber(state.position.pendingReward) <= 0} className="rounded-xl bg-green-500 px-4 py-3 text-base font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-300">Claim Rewards</button>
@@ -276,12 +278,12 @@ export function DashboardTransactionsView() {
             <Link href="/lend" className={`text-sm ${isDarkMode ? "text-slate-300 hover:text-slate-100" : "text-slate-500 hover:text-slate-900"}`}>View loan →</Link>
           </div>
           <div className="mb-4 grid gap-4 sm:grid-cols-2">
-            <StatCard label="Collateral" value={`${state.position.collateral} ETH`} sub={`≈ $${collateralUsd.toLocaleString()}`} />
+            <StatCard label="Collateral" value={state.hasAnyCollateral ? state.totalCollateralDisplay : "No collateral"} sub={`≈ $${collateralUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} />
             <StatCard label="Total Debt" value={`$${totalDebt.toFixed(2)}`} sub="USDT" valueClass="text-orange-600" />
           </div>
           <div className={`mb-4 overflow-hidden rounded-xl border ${isDarkMode ? "border-slate-700" : "border-slate-200"}`}>
             <div className={`flex justify-between border-b px-4 py-3 ${isDarkMode ? "border-slate-700" : "border-slate-200"}`}><span className={isDarkMode ? "text-slate-300" : "text-slate-600"}>Loan Amount</span><span className={`font-semibold ${isDarkMode ? "text-slate-100" : "text-slate-900"}`}>${toNumber(state.position.borrowed).toLocaleString()} USDT</span></div>
-            <div className={`flex justify-between border-b px-4 py-3 ${isDarkMode ? "border-slate-700" : "border-slate-200"}`}><span className={isDarkMode ? "text-slate-300" : "text-slate-600"}>Interest (4.0% APR)</span><span className={`font-semibold ${isDarkMode ? "text-slate-100" : "text-slate-900"}`}>${toNumber(state.position.accruedInterest).toFixed(2)}</span></div>
+            <div className={`flex justify-between border-b px-4 py-3 ${isDarkMode ? "border-slate-700" : "border-slate-200"}`}><span className={isDarkMode ? "text-slate-300" : "text-slate-600"}>Interest ({borrowApy.toFixed(2)}% APR)</span><span className={`font-semibold ${isDarkMode ? "text-slate-100" : "text-slate-900"}`}>${toNumber(state.position.accruedInterest).toFixed(2)}</span></div>
             <div className="flex justify-between px-4 py-3"><span className={isDarkMode ? "text-slate-300" : "text-slate-600"}>Health Factor</span><span className={`font-semibold ${healthFactor > 1.2 ? "text-green-600" : "text-rose-600"}`}>{healthFactor > 0 ? healthFactor.toFixed(2) : "-"}</span></div>
           </div>
           <label className={`mb-2 block text-sm font-medium ${isDarkMode ? "text-slate-300" : "text-slate-700"}`}>Repay Amount (USDT)</label>
