@@ -135,6 +135,10 @@ type DefiContextType = {
   reserveFactorBps: string;
   borrowApyBps: string;
   tokenCollateral: Record<string, string>;
+  tokenCollateralValueUsdt: string;
+  totalCollateralValueUsdt: string;
+  totalCollateralDisplay: string;
+  hasAnyCollateral: boolean;
   position: Position;
   borrowHistory: BorrowHistory[];
   repayHistory: RepayHistory[];
@@ -312,6 +316,37 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     const price = prices[asset.coingeckoId] ?? 0;
     return sum + toNumber(assetBalances[asset.id] || "0") * price;
   }, toNumber(usdtBalance));
+  const tokenCollateralValueUsdt = useMemo(
+    () =>
+      assets
+        .filter((asset) => asset.type === "erc20")
+        .reduce((sum, asset) => {
+          const price = prices[asset.coingeckoId] ?? 0;
+          return sum + toNumber(tokenCollateral[asset.id] || "0") * price;
+        }, 0),
+    [assets, prices, tokenCollateral],
+  );
+  const totalCollateralValueUsdt = useMemo(
+    () => toNumber(position.collateral) * (prices.ethereum ?? 0) + tokenCollateralValueUsdt,
+    [position.collateral, prices.ethereum, tokenCollateralValueUsdt],
+  );
+  const totalCollateralDisplay = useMemo(() => {
+    const parts: string[] = [];
+    if (toNumber(position.collateral) > 0) {
+      parts.push(`${position.collateral} ETH`);
+    }
+    for (const asset of assets.filter((item) => item.type === "erc20")) {
+      const amount = tokenCollateral[asset.id] || "0";
+      if (toNumber(amount) > 0) {
+        parts.push(`${amount} ${asset.symbol}`);
+      }
+    }
+    return parts.join(" + ");
+  }, [assets, position.collateral, tokenCollateral]);
+  const hasAnyCollateral = useMemo(
+    () => toNumber(position.collateral) > 0 || Object.values(tokenCollateral).some((amount) => toNumber(amount) > 0),
+    [position.collateral, tokenCollateral],
+  );
   const isTreasury = account && account.toLowerCase() === DEPLOYMENT.deployer.toLowerCase();
 
   const visibleAssets = assets.filter((asset) => {
@@ -1274,6 +1309,10 @@ export function DefiProvider({ children }: { children: ReactNode }) {
     reserveFactorBps,
     borrowApyBps,
     tokenCollateral,
+    tokenCollateralValueUsdt: tokenCollateralValueUsdt.toFixed(2),
+    totalCollateralValueUsdt: totalCollateralValueUsdt.toFixed(2),
+    totalCollateralDisplay,
+    hasAnyCollateral,
     position,
     borrowHistory,
     repayHistory,
