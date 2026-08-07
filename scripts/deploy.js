@@ -1,3 +1,23 @@
+/**
+ * deploy.js
+ * ---------
+ * Full deployment script for CryptoLend on the local Hardhat node.
+ *
+ * Deployment order:
+ *   1. MockUSDT         – lending/staking denomination (6 dec)
+ *   2. MockToken x2     – BTC (8 dec) and SOL (9 dec) collateral stand-ins
+ *   3. PriceOracle      – on-chain price registry (owner = deployer)
+ *   4. LendingPool      – core protocol (USDT + oracle addresses passed in constructor)
+ *
+ * After deploying:
+ *   - Mints demo balances to deployer, borrower, and up to 8 additional Hardhat accounts.
+ *   - Seeds pool with 5 000 mUSDT and 1 000 ETH.
+ *   - Fetches live CoinGecko prices and pushes them to the oracle.
+ *   - Configures BTC and SOL as accepted collateral assets on LendingPool.
+ *   - Writes src/lib/deployment.json (consumed by the Next.js frontend).
+ *
+ * Prerequisite: `npm run hardhat:node` must be running before calling this script.
+ */
 const fs = require("node:fs");
 const path = require("node:path");
 const hre = require("hardhat");
@@ -5,7 +25,7 @@ const hre = require("hardhat");
 const COINGECKO_IDS = {
   ETH: "ethereum",
   BTC: "bitcoin",
-  SOL: "solana"
+  SOL: "solana",
 };
 
 function priceToUsdtUnits(price) {
@@ -18,7 +38,9 @@ function priceToUsdtUnits(price) {
 async function fetchCoinGeckoPrices() {
   const ids = Object.values(COINGECKO_IDS).join(",");
   const url = `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`;
-  const response = await fetch(url, { headers: { accept: "application/json" } });
+  const response = await fetch(url, {
+    headers: { accept: "application/json" },
+  });
 
   if (!response.ok) {
     throw new Error(`CoinGecko request failed with status ${response.status}`);
@@ -32,7 +54,7 @@ async function fetchCoinGeckoPrices() {
         throw new Error(`Missing CoinGecko price for ${symbol}`);
       }
       return [symbol, priceToUsdtUnits(price)];
-    })
+    }),
   );
 }
 
@@ -58,7 +80,10 @@ async function main() {
   await priceOracle.waitForDeployment();
 
   const LendingPool = await hre.ethers.getContractFactory("LendingPool");
-  const lendingPool = await LendingPool.deploy(await mockUsdt.getAddress(), await priceOracle.getAddress());
+  const lendingPool = await LendingPool.deploy(
+    await mockUsdt.getAddress(),
+    await priceOracle.getAddress(),
+  );
   await lendingPool.waitForDeployment();
 
   await (await mockUsdt.mint(deployer.address, parseUsdt("25000"))).wait();
@@ -72,11 +97,13 @@ async function main() {
     await (await mockBtc.mint(demoUser.address, parseBtc("1"))).wait();
     await (await mockSol.mint(demoUser.address, parseSol("100"))).wait();
   }
-  await (await mockUsdt.transfer(await lendingPool.getAddress(), parseUsdt("5000"))).wait();
+  await (
+    await mockUsdt.transfer(await lendingPool.getAddress(), parseUsdt("5000"))
+  ).wait();
   await (
     await deployer.sendTransaction({
       to: await lendingPool.getAddress(),
-      value: hre.ethers.parseEther("1000")
+      value: hre.ethers.parseEther("1000"),
     })
   ).wait();
 
@@ -84,19 +111,38 @@ async function main() {
   await (
     await priceOracle.setPricesUsdt(
       [assetId("ETH"), assetId("BTC"), assetId("SOL")],
-      [oraclePrices.ETH, oraclePrices.BTC, oraclePrices.SOL]
+      [oraclePrices.ETH, oraclePrices.BTC, oraclePrices.SOL],
     )
   ).wait();
 
-  await (await lendingPool.configureCollateralAsset(assetId("BTC"), await mockBtc.getAddress(), 8, 7000, 8500)).wait();
-  await (await lendingPool.configureCollateralAsset(assetId("SOL"), await mockSol.getAddress(), 9, 6500, 8000)).wait();
+  await (
+    await lendingPool.configureCollateralAsset(
+      assetId("BTC"),
+      await mockBtc.getAddress(),
+      8,
+      7000,
+      8500,
+    )
+  ).wait();
+  await (
+    await lendingPool.configureCollateralAsset(
+      assetId("SOL"),
+      await mockSol.getAddress(),
+      9,
+      6500,
+      8000,
+    )
+  ).wait();
 
   const deployment = {
     chainId: 31337,
     networkName: "Hardhat Local",
     deployer: deployer.address,
     demoBorrower: borrower.address,
-    demoUsers: [borrower.address, ...demoUsers.slice(0, 8).map((signer) => signer.address)],
+    demoUsers: [
+      borrower.address,
+      ...demoUsers.slice(0, 8).map((signer) => signer.address),
+    ],
     mockUsdt: await mockUsdt.getAddress(),
     mockBtc: await mockBtc.getAddress(),
     mockSol: await mockSol.getAddress(),
@@ -111,7 +157,7 @@ async function main() {
         type: "native",
         decimals: 18,
         ltvBps: 7000,
-        liquidationThresholdBps: 8500
+        liquidationThresholdBps: 8500,
       },
       {
         id: "BTC",
@@ -122,7 +168,7 @@ async function main() {
         address: await mockBtc.getAddress(),
         decimals: 8,
         ltvBps: 7000,
-        liquidationThresholdBps: 8500
+        liquidationThresholdBps: 8500,
       },
       {
         id: "SOL",
@@ -133,18 +179,24 @@ async function main() {
         address: await mockSol.getAddress(),
         decimals: 9,
         ltvBps: 6500,
-        liquidationThresholdBps: 8000
-      }
+        liquidationThresholdBps: 8000,
+      },
     ],
     constants: {
       maxLtvBps: "7000",
       interestBps: "400",
       stakingApyBps: "350",
-      usdtDecimals: 6
-    }
+      usdtDecimals: 6,
+    },
   };
 
-  const outputPath = path.join(__dirname, "..", "src", "lib", "deployment.json");
+  const outputPath = path.join(
+    __dirname,
+    "..",
+    "src",
+    "lib",
+    "deployment.json",
+  );
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, `${JSON.stringify(deployment, null, 2)}\n`);
 

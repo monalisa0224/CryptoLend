@@ -1,35 +1,55 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+/**
+ * @title CryptoLend – LendingPool
+ * @notice Core protocol contract providing ETH/ERC-20 collateralised borrowing,
+ *         per-second staking rewards, day-granular interest accrual,
+ *         full/partial repayment, collateral withdrawal, and treasury liquidation.
+ * @dev Deploy order: MockUSDT -> MockToken(s) -> PriceOracle -> LendingPool.
+ *      Treasury (deployer) has exclusive access to admin functions.
+ */
+
+// Minimal ERC-20 interface required by LendingPool for token transfers.
 interface IERC20Token {
     function balanceOf(address account) external view returns (uint256);
     function transfer(address to, uint256 amount) external returns (bool);
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
 }
 
+// Interface for the PriceOracle; prices are expressed in mUSDT units (6 decimals).
 interface IPriceOracle {
     function getPriceUsdt(bytes32 assetId) external view returns (uint256);
 }
 
 contract LendingPool {
+    /// @dev Configuration for an ERC-20 collateral type (BTC, SOL, etc.).
     struct CollateralAsset {
-        address token;
-        uint8 decimals;
-        uint256 ltvBps;
-        uint256 liquidationThresholdBps;
-        bool enabled;
+        address token;                    // ERC-20 contract address
+        uint8 decimals;                   // Token precision (e.g. 8 for BTC)
+        uint256 ltvBps;                   // Max loan-to-value in basis points (7000 = 70 %)
+        uint256 liquidationThresholdBps;  // Health-factor floor before liquidation (8500 = 85 %)
+        bool enabled;                     // Must be true for the asset to be accepted as collateral
     }
 
+    /// @dev Per-borrower loan state. ETH collateral is stored here; ERC-20 collateral
+    ///      is in the separate `tokenCollateral` mapping.
     struct LoanPosition {
-        uint256 collateralWei;
-        uint256 borrowedUsdt;
-        uint256 updatedAt;
+        uint256 collateralWei;  // ETH collateral locked (wei)
+        uint256 borrowedUsdt;   // Principal still outstanding (mUSDT, 6 decimals)
+        uint256 updatedAt;      // Block timestamp of last borrow or repay (used for interest)
     }
 
-    IERC20Token public immutable mockUsdt;
-    IPriceOracle public immutable priceOracle;
-    address public immutable treasury;
+    // -------------------------------------------------------------------------
+    // Immutable references – set once in the constructor and never changed.
+    // -------------------------------------------------------------------------
+    IERC20Token public immutable mockUsdt;   // The mUSDT token used for all pool flows
+    IPriceOracle public immutable priceOracle; // Live price source for collateral valuation
+    address public immutable treasury;       // Deployer; authorised for admin/liquidation calls
 
+    // -------------------------------------------------------------------------
+    // Protocol constants (basis-point rates, decimal scales, time constants).
+    // -------------------------------------------------------------------------
     uint256 public constant USDT_DECIMALS = 1e6;
     uint256 public constant ETH_DECIMALS = 1e18;
     uint256 public constant MAX_LTV_BPS = 7000;
@@ -42,21 +62,43 @@ contract LendingPool {
     uint256 public constant BPS_DENOMINATOR = 10000;
     uint256 public constant YEAR_SECONDS = 365 days;
 
-    bool private locked;
+    // -------------------------------------------------------------------------
+    // Mutable state variables.
+    // -------------------------------------------------------------------------
+    bool private locked; // Non-reentrancy guard flag
+
+    // Asset registry identifier for native ETH (used as a map key and in events).
     bytes32 public constant ETH_ASSET = bytes32("ETH");
+
+    // Liquidation threshold for ETH collateral in BPS (85 % default). Adjustable by treasury.
     uint256 public ethLiquidationThresholdBps = 8500;
+
+    // Per-borrower ETH + debt positions.
     mapping(address => LoanPosition) public positions;
+
+    // Registered ERC-20 collateral assets (BTC, SOL, etc.).
     mapping(bytes32 => CollateralAsset) public collateralAssets;
-    bytes32[] public collateralAssetIds;
+    bytes32[] public collateralAssetIds; // Iterable list of registered asset IDs
+
+    // ERC-20 collateral balances: user → assetId → amount.
     mapping(address => mapping(bytes32 => uint256)) public tokenCollateral;
+    // Protocol-wide ERC-20 collateral totals per asset.
     mapping(bytes32 => uint256) public totalTokenCollateral;
-    mapping(address => uint256) public stakedUsdt;
-    mapping(address => uint256) public lastRewardAt;
+
+    // Staking state.
+    mapping(address => uint256) public stakedUsdt;    // Principal staked per investor
+    mapping(address => uint256) public lastRewardAt;  // Last reward accrual timestamp per investor
+
+    // Protocol-wide aggregate counters.
     uint256 public totalBorrowedUsdt;
     uint256 public totalStakedUsdt;
-    uint256 public protocolReserveUsdt;
-    uint256 public minReserveUsdt;
-    uint256 public minLiquidityBufferBps = 3000;
+
+    // Reserve accounting: portion of interest collected for protocol earnings.
+    uint256 public protocolReserveUsdt;  // Accumulated reserve inside the pool
+    uint256 public minReserveUsdt;       // Floor – cannot be withdrawn by treasury
+
+    // Minimum fraction of pool balance that must remain available after any treasury withdrawal.
+    uint256 public minLiquidityBufferBps = 3000; // 30 % default
 
     event Borrowed(
         address indexed borrower,
@@ -79,6 +121,11 @@ contract LendingPool {
     event LiquidationThresholdUpdated(bytes32 indexed assetId, uint256 liquidationThresholdBps);
     event Liquidated(address indexed liquidator, address indexed borrower, bytes32 indexed assetId, uint256 repayAmountUsdt, uint256 collateralSeized, uint256 bonusUsdt);
 
+    // -------------------------------------------------------------------------
+    // Modifiers.
+    // -------------------------------------------------------------------------
+
+    /// @dev Prevents re-entrant calls into any function that transfers funds.
     modifier nonReentrant() {
         require(!locked, "Reentrant call");
         locked = true;
@@ -86,11 +133,22 @@ contract LendingPool {
         locked = false;
     }
 
+    /// @dev Restricts function to the treasury (deployer) address only.
     modifier onlyTreasury() {
         require(msg.sender == treasury, "Not treasury");
         _;
     }
 
+    // -------------------------------------------------------------------------
+    // Constructor.
+    // -------------------------------------------------------------------------
+
+    /**
+     * @param mockUsdtAddress  Deployed MockUSDT contract address.
+     * @param priceOracleAddress Deployed PriceOracle contract address.
+     * @dev Caller becomes the treasury.  Call `configureCollateralAsset` after
+     *      deployment to register ERC-20 collateral types.
+     */
     constructor(address mockUsdtAddress, address priceOracleAddress) {
         require(mockUsdtAddress != address(0), "Invalid USDT");
         require(priceOracleAddress != address(0), "Invalid oracle");
@@ -158,6 +216,16 @@ contract LendingPool {
         emit LiquidityFunded(msg.sender, usdtAmount);
     }
 
+    // -------------------------------------------------------------------------
+    // Borrowing.
+    // -------------------------------------------------------------------------
+
+    /**
+     * @notice Borrow mUSDT by sending ETH as collateral.
+     * @param borrowAmountUsdt Amount of mUSDT to borrow (6-decimal units).
+     * @dev Collateral value and max borrow are calculated via the live PriceOracle.
+     *      Only one active loan per address is allowed at a time.
+     */
     function borrowWithEthCollateral(uint256 borrowAmountUsdt) external payable nonReentrant {
         require(msg.value > 0, "Collateral required");
         require(borrowAmountUsdt > 0, "Borrow amount required");
@@ -179,6 +247,13 @@ contract LendingPool {
         emit Borrowed(msg.sender, msg.value, borrowAmountUsdt, collateralValue, maxBorrow);
     }
 
+    /**
+     * @notice Borrow mUSDT using an ERC-20 token (BTC, SOL, etc.) as collateral.
+     * @param assetId          bytes32-encoded asset symbol (e.g. `encodeBytes32String("BTC")`).
+     * @param collateralAmount Amount of the ERC-20 token to deposit as collateral.
+     * @param borrowAmountUsdt Amount of mUSDT to borrow.
+     * @dev Caller must `approve` this contract for `collateralAmount` before calling.
+     */
     function borrowWithTokenCollateral(
         bytes32 assetId,
         uint256 collateralAmount,
@@ -207,6 +282,15 @@ contract LendingPool {
         emit TokenBorrowed(msg.sender, assetId, collateralAmount, borrowAmountUsdt, collateralValue, maxBorrow);
     }
 
+    // -------------------------------------------------------------------------
+    // Repayment.
+    // -------------------------------------------------------------------------
+
+    /**
+     * @notice Partially or fully repay an outstanding mUSDT loan.
+     * @param amountUsdt Amount to repay (must cover at least accrued interest).
+     * @dev Interest is applied first; 10 % of interest paid flows to `protocolReserveUsdt`.
+     */
     function repayUsdt(uint256 amountUsdt) external nonReentrant {
         require(amountUsdt > 0, "Repay amount required");
 
@@ -233,6 +317,10 @@ contract LendingPool {
         emit Repaid(msg.sender, amountUsdt, interestPaid, principalPaid);
     }
 
+    /**
+     * @notice Repay the entire outstanding loan (principal + all accrued interest) in one call.
+     * @dev After this, `position.borrowedUsdt` is 0 and the borrower may call `withdrawAllCollateral()`.
+     */
     function repayFullLoan() external nonReentrant {
         LoanPosition storage position = positions[msg.sender];
         require(position.borrowedUsdt > 0, "No active loan");
@@ -251,6 +339,20 @@ contract LendingPool {
         emit Repaid(msg.sender, totalDebt, interest, principal);
     }
 
+    // -------------------------------------------------------------------------
+    // Liquidation (treasury only).
+    // -------------------------------------------------------------------------
+
+    /**
+     * @notice Liquidate an under-collateralised position.
+     * @param borrower        Address of the borrower to liquidate.
+     * @param assetId         Collateral asset to seize (`ETH_ASSET` for ETH; or ERC-20 asset id).
+     * @param repayAmountUsdt Amount of mUSDT the treasury is repaying on behalf of the borrower.
+     * @dev Caller must `approve` this contract for `repayAmountUsdt` before calling.
+     *      Health factor must be <= `LIQUIDATION_HEALTH_FACTOR_BPS` (1.1).
+     *      Close factor caps repay at 50 % of total debt per call.
+     *      Liquidator (treasury) receives collateral + 5 % bonus.
+     */
     function liquidate(
         address borrower,
         bytes32 assetId,
@@ -279,6 +381,12 @@ contract LendingPool {
         emit Liquidated(msg.sender, borrower, assetId, repayAmountUsdt, seizeAmount, bonusUsdt);
     }
 
+    // -------------------------------------------------------------------------
+    // Internal helpers.
+    // -------------------------------------------------------------------------
+
+    /// @dev Allocates an interest payment and reduces outstanding principal.
+    ///      10 % of interest paid is added to `protocolReserveUsdt`.
     function _applyDebtPayment(address borrower, uint256 amountUsdt) private {
         LoanPosition storage position = positions[borrower];
         uint256 interest = getAccruedInterestUsdt(borrower);
@@ -299,6 +407,8 @@ contract LendingPool {
         position.updatedAt = block.timestamp;
     }
 
+    /// @dev Transfers `seizeAmount` of the specified collateral from borrower to liquidator.
+    ///      Handles both native ETH and ERC-20 token collateral.
     function _seizeCollateral(address borrower, address liquidator, bytes32 assetId, uint256 seizeAmount) private {
         if (assetId == ETH_ASSET) {
             LoanPosition storage position = positions[borrower];
@@ -344,12 +454,24 @@ contract LendingPool {
         emit CollateralWithdrawn(msg.sender, ethCollateral);
     }
 
+    // -------------------------------------------------------------------------
+    // Staking.
+    // -------------------------------------------------------------------------
+
+    /**
+     * @notice Stake mUSDT to earn continuous APY rewards.
+     * @param amountUsdt Amount to stake (6-decimal units).
+     * @dev Any pending reward is auto-claimed before the new stake is added,
+     *      resetting the reward checkpoint to the current block.
+     */
     function stakeUsdt(uint256 amountUsdt) external nonReentrant {
         require(amountUsdt > 0, "Stake amount required");
         require(mockUsdt.transferFrom(msg.sender, address(this), amountUsdt), "Stake transfer failed");
         _stake(msg.sender, amountUsdt);
     }
 
+    /// @dev Internal stake logic shared by `stakeUsdt` and `addLiquidity`.
+    ///      Auto-claims pending reward, updates balances, and resets the reward checkpoint.
     function _stake(address user, uint256 amountUsdt) private {
         uint256 reward = pendingRewardUsdt(user);
         if (reward > 0) {
@@ -364,6 +486,11 @@ contract LendingPool {
         emit Staked(user, amountUsdt);
     }
 
+    /**
+     * @notice Unstake mUSDT principal and collect all pending rewards in one call.
+     * @param amountUsdt Amount of principal to withdraw.
+     * @dev Treasury wallet is subject to `_enforceLiquidityGuard` to protect outstanding loans.
+     */
     function unstakeUsdt(uint256 amountUsdt) external nonReentrant {
         require(amountUsdt > 0, "Unstake amount required");
         require(stakedUsdt[msg.sender] >= amountUsdt, "Insufficient stake");
@@ -399,6 +526,11 @@ contract LendingPool {
         emit ProtocolReserveWithdrawn(msg.sender, amountUsdt);
     }
 
+    /**
+     * @dev Reverts if a treasury outflow would leave the pool unable to cover:
+     *      (a) all outstanding borrowed principal, or
+     *      (b) the configured minimum liquidity buffer percentage.
+     */
     function _enforceLiquidityGuard(uint256 outflowUsdt) private view {
         uint256 poolBalance = mockUsdt.balanceOf(address(this));
         uint256 available = poolBalance >= protocolReserveUsdt ? poolBalance - protocolReserveUsdt : 0;
@@ -420,6 +552,14 @@ contract LendingPool {
         emit RewardClaimed(msg.sender, reward);
     }
 
+    // -------------------------------------------------------------------------
+    // View functions.
+    // -------------------------------------------------------------------------
+
+    /**
+     * @notice Calculate unclaimed staking reward for an investor.
+     * @dev Reward accrues continuously per second: principal * APY_BPS * elapsed / (10000 * YEAR).
+     */
     function pendingRewardUsdt(address investor) public view returns (uint256) {
         uint256 principal = stakedUsdt[investor];
         if (principal == 0 || lastRewardAt[investor] == 0) {
@@ -430,6 +570,11 @@ contract LendingPool {
         return (principal * STAKING_APY_BPS * elapsed) / (BPS_DENOMINATOR * YEAR_SECONDS);
     }
 
+    /**
+     * @notice Calculate borrow interest accrued for a borrower.
+     * @dev Interest increments only on completed full days to avoid sub-day precision drift.
+     *      Formula: borrowed * INTEREST_BPS * elapsedDays / (10000 * 365)
+     */
     function getAccruedInterestUsdt(address borrower) public view returns (uint256) {
         LoanPosition memory position = positions[borrower];
         if (position.borrowedUsdt == 0 || position.updatedAt == 0) {
@@ -445,6 +590,14 @@ contract LendingPool {
         return position.borrowedUsdt + getAccruedInterestUsdt(borrower);
     }
 
+    /**
+     * @notice Return a complete risk snapshot for a borrower.
+     * @return collateralValueUsdt    Total collateral value at current oracle prices.
+     * @return liquidationValueUsdt   Collateral value adjusted by liquidation threshold.
+     * @return debtUsdt               Principal + accrued interest.
+     * @return healthFactorBps        (liquidationValue * 10000) / debt; type(uint256).max if no debt.
+     *                                 Position becomes liquidatable when this value <= 11000 (1.1).
+     */
     function getBorrowerRiskData(address borrower) public view returns (
         uint256 collateralValueUsdt,
         uint256 liquidationValueUsdt,

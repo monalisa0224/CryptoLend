@@ -8,80 +8,144 @@
 
 `LendingPool` is the protocol core handling:
 
-- ETH-collateralized mUSDT borrowing.
-- mUSDT staking and reward accounting.
+- ETH and ERC-20 collateralised mUSDT borrowing.
+- Day-granular interest accrual and partial/full loan repayment.
+- Collateral withdrawal after repayment.
+- mUSDT staking with continuous reward accrual.
+- Treasury-only liquidation of under-collateralised positions.
+- Protocol reserve accumulation and treasury reserve withdrawal.
 
 ## Core State
 
-- `mockUsdt`: immutable token interface.
-- `treasury`: contract deployer (metadata role in current implementation).
-- `positions`: borrower loan positions.
-- `stakedUsdt`: investor principal per wallet.
-- `lastRewardAt`: timestamp checkpoint for reward accrual.
-- `totalBorrowedUsdt`, `totalStakedUsdt`: aggregate protocol counters.
-- `locked`: non-reentrancy guard.
+| Variable              | Type                                              | Purpose                                                |
+| --------------------- | ------------------------------------------------- | ------------------------------------------------------ |
+| `mockUsdt`            | `IERC20Token` (immutable)                         | The mUSDT token used for all transfers                 |
+| `priceOracle`         | `IPriceOracle` (immutable)                        | Live price source for collateral valuation             |
+| `treasury`            | `address` (immutable)                             | Deployer; guards admin functions via `onlyTreasury`    |
+| `positions`           | `mapping(address => LoanPosition)`                | Per-borrower ETH collateral + debt + timestamp         |
+| `collateralAssets`    | `mapping(bytes32 => CollateralAsset)`             | ERC-20 collateral configs (LTV, liquidation threshold) |
+| `tokenCollateral`     | `mapping(address => mapping(bytes32 => uint256))` | Per-user ERC-20 collateral balances                    |
+| `stakedUsdt`          | `mapping(address => uint256)`                     | Per-investor staked principal                          |
+| `lastRewardAt`        | `mapping(address => uint256)`                     | Per-investor reward accrual checkpoint                 |
+| `protocolReserveUsdt` | `uint256`                                         | Accumulated interest reserve (10 % reserve factor)     |
+| `totalBorrowedUsdt`   | `uint256`                                         | Aggregate outstanding loan principal                   |
+| `totalStakedUsdt`     | `uint256`                                         | Aggregate staked principal                             |
+| `locked`              | `bool`                                            | Simple non-reentrancy guard                            |
 
 ## Constants
 
-- `PRICE_USDT_PER_ETH = 100`
-- `MAX_LTV_BPS = 7000`
-- `INTEREST_BPS = 400`
-- `STAKING_APY_BPS = 350`
-- `BPS_DENOMINATOR = 10000`
-- `YEAR_SECONDS = 365 days`
+| Constant                        | Value    | Meaning                                              |
+| ------------------------------- | -------- | ---------------------------------------------------- |
+| `MAX_LTV_BPS`                   | 7000     | 70 % max loan-to-value for ETH/BTC collateral        |
+| `INTEREST_BPS`                  | 400      | 4 % APR borrow interest (day-granular)               |
+| `STAKING_APY_BPS`               | 350      | 3.5 % APY staking reward (per-second)                |
+| `RESERVE_FACTOR_BPS`            | 1000     | 10 % of interest goes to protocol reserve            |
+| `LIQUIDATION_BONUS_BPS`         | 500      | 5 % bonus collateral seized during liquidation       |
+| `LIQUIDATION_CLOSE_FACTOR_BPS`  | 5000     | 50 % max debt repayable per liquidation call         |
+| `LIQUIDATION_HEALTH_FACTOR_BPS` | 11000    | Health factor ≤ 1.1 triggers eligibility             |
+| `BPS_DENOMINATOR`               | 10000    | Basis point denominator for all rate math            |
+| `YEAR_SECONDS`                  | 365 days | Seconds in a year (used in reward/interest formulas) |
 
 ## Borrowing Logic
 
-### Function: `borrowWithEthCollateral(uint256 borrowAmountUsdt)`
+### `borrowWithEthCollateral(uint256 borrowAmountUsdt) payable`
 
-Checks:
+- Rejects if borrower has an existing active loan.
+- Reads ETH/USD price from `priceOracle` to value collateral.
+- Enforces `borrowAmount <= collateralValue * MAX_LTV_BPS / 10000`.
+- Checks pool has sufficient mUSDT.
+- Transfers mUSDT to borrower, updates `positions[msg.sender]` and `totalBorrowedUsdt`.
+- Emits `Borrowed` event.
 
-- ETH collateral (`msg.value`) must be > 0.
-- Borrow amount must be > 0.
-- Borrow amount <= max LTV derived from collateral.
-- Pool mUSDT balance must be sufficient.
+### `borrowWithTokenCollateral(bytes32 assetId, uint256 collateralAmount, uint256 borrowAmountUsdt)`
 
-Actions:
+- Checks collateral asset is configured and enabled.
+- Uses asset-specific LTV from `collateralAssets[assetId].ltvBps`.
+- Pulls ERC-20 token collateral from borrower with `transferFrom`.
+- Same single-active-loan guard as ETH borrow.
+- Emits `TokenBorrowed` event.
 
-- Transfer mUSDT from pool to borrower.
-- Increase borrower `positions[msg.sender]` collateral and borrowed values.
-- Update `totalBorrowedUsdt`.
-- Emit `Borrowed` event.
+## Repayment Logic
+
+### `repayUsdt(uint256 amountUsdt)`
+
+- Partial or full repay against an active loan.
+- Requires `amountUsdt >= accruedInterest` (interest must be covered first).
+- 10 % of interest paid is deposited into `protocolReserveUsdt`.
+- Reduces `position.borrowedUsdt` by the principal component.
+- Emits `Repaid` event.
+
+### `repayFullLoan()`
+
+- Calculates total debt at call time (principal + interest) and pulls it all in one transfer.
+- Clears `position.borrowedUsdt` to 0.
+- Emits `Repaid` event.
+- After this, `withdrawAllCollateral()` becomes available.
+
+### `withdrawAllCollateral()`
+
+- Guards: `position.borrowedUsdt` must be 0.
+- Returns ETH (via `.call`) and all registered ERC-20 collateral tokens.
+- Emits `CollateralWithdrawn` event.
 
 ## Staking Logic
 
-### Function: `stakeUsdt(uint256 amountUsdt)`
+### `stakeUsdt(uint256 amountUsdt)`
 
-- Requires amount > 0.
-- Computes pending reward first.
-- If reward exists, sends reward immediately before adding new stake.
-- Pulls principal from user with `transferFrom`.
-- Increments user and protocol staked totals.
-- Sets `lastRewardAt` to current block timestamp.
+- Pulls mUSDT from user.
+- Calls `_stake()` which auto-claims pending reward before adding new principal.
+- Resets `lastRewardAt[user]` to current block.
+- Emits `Staked` and optionally `RewardClaimed` events.
 
-### Function: `unstakeUsdt(uint256 amountUsdt)`
+### `unstakeUsdt(uint256 amountUsdt)`
 
-- Requires amount > 0 and sufficient staked balance.
-- Computes pending reward.
-- Payout = principal + reward.
-- Requires pool has enough token liquidity for payout.
-- Decrements stake balances, updates timestamp, transfers payout.
+- Computes pending reward; payout = principal + reward.
+- Treasury wallet is subject to `_enforceLiquidityGuard()` before withdrawal.
+- Decrements staked balances and transfers payout.
+- Emits `Unstaked` and optionally `RewardClaimed` events.
 
-### Function: `claimRewards()`
+### `claimRewards()`
 
-- Requires pending reward > 0.
-- Requires pool reward reserve liquidity.
-- Updates timestamp and transfers reward only.
+- Transfers only pending reward; does not touch staked principal.
+- Updates `lastRewardAt[msg.sender]`.
+- Emits `RewardClaimed`.
 
-## Reward and LTV Helpers
+## Liquidation Logic
 
-- `pendingRewardUsdt(investor)` computes linear APY over elapsed time.
-- `getCollateralValueUsdt(collateralWei)` converts ETH to token value at constant price.
-- `getMaxBorrowUsdt(collateralWei)` applies LTV ratio to collateral value.
+### `liquidate(address borrower, bytes32 assetId, uint256 repayAmountUsdt)` — treasury only
 
-## Security/Correctness Notes
+1. Reads health factor from `getBorrowerRiskData(borrower)`.
+2. Reverts if health factor > `LIQUIDATION_HEALTH_FACTOR_BPS` (1.1).
+3. Caps repay to 50 % of total debt (close factor) unless repaying in full.
+4. Calls `previewLiquidation()` to compute `seizeAmount = (repay + 5 % bonus) / oraclePrice`.
+5. Pulls mUSDT from treasury via `transferFrom`, calls `_applyDebtPayment()`, then `_seizeCollateral()` to send collateral to treasury.
+6. Emits `Liquidated` event.
 
-- Uses simple `nonReentrant` lock around all state-changing transfer functions.
-- Relies on pool token reserves for both loan and reward payouts.
-- No liquidation, repayment, dynamic pricing, or interest accrual is implemented yet.
-- `getPoolLiquidityUsdt()` and `getAvailableLiquidityUsdt()` currently return the same value.
+## Key View Functions
+
+| Function                                       | Description                                                      |
+| ---------------------------------------------- | ---------------------------------------------------------------- |
+| `pendingRewardUsdt(investor)`                  | Per-second linear APY reward since `lastRewardAt`                |
+| `getAccruedInterestUsdt(borrower)`             | Day-granular borrow interest since `positions.updatedAt`         |
+| `getTotalDebtUsdt(borrower)`                   | Principal + accrued interest                                     |
+| `getBorrowerRiskData(borrower)`                | Returns collateral value, liquidation value, debt, health factor |
+| `previewLiquidation(borrower, assetId, repay)` | Preview collateral seize amount and bonus for a liquidation      |
+| `getCollateralValueUsdt(wei)`                  | ETH collateral → mUSDT value using oracle                        |
+| `getTokenCollateralValueUsdt(assetId, amount)` | ERC-20 collateral → mUSDT value using oracle                     |
+| `getMaxBorrowUsdt(wei)`                        | ETH collateral → max borrowable mUSDT                            |
+| `getAvailableLiquidityUsdt()`                  | Pool balance minus protocol reserve                              |
+| `getCompanyTreasuryUsdt()`                     | Treasury staked + pending reward + claimable reserve             |
+
+## Liquidity Safety Mechanisms
+
+- `_enforceLiquidityGuard(outflow)` is called before any treasury withdrawal or unstake.
+  It ensures: available pool liquidity after withdrawal can still cover all outstanding loans AND meets `minLiquidityBufferBps`.
+- `minReserveUsdt` keeps a floor of protocol reserve that cannot be withdrawn.
+- `protocolReserveUsdt` tracks accumulated interest kept inside the pool.
+
+## Security Notes
+
+- `nonReentrant` modifier wraps all state-changing functions that transfer funds.
+- `onlyTreasury` guards admin operations (configure assets, liquidate, withdraw reserve).
+- Interest is day-granular (not per-second) to reduce precision drift.
+- `staticCall` pre-flight checks in frontend catch contract reverts before submitting real transactions.
