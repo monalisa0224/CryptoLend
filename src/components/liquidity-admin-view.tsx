@@ -299,7 +299,7 @@ export function NewLiquidityAdminView() {
             },
             {
               label: "Available",
-              value: `$${(available / 1_000_000).toFixed(2)}M`,
+              value: `$${(liquidity / 1_000_000).toFixed(2)}M`,
               sub: "Ready to borrow",
               icon: ShieldCheck,
               color: "text-green-500",
@@ -410,7 +410,7 @@ export function NewLiquidityAdminView() {
                     <span>
                       Available:{" "}
                       <span className="font-medium text-foreground">
-                        ${available.toLocaleString()} USDT
+                        ${liquidity.toLocaleString()} USDT
                       </span>
                     </span>
                     <span>
