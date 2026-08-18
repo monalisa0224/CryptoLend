@@ -1,3 +1,12 @@
+/**
+ * Borrow History API
+ * ------------------
+ * GET  /api/borrow-history?wallet=<address>  – returns last 20 borrow records for the wallet.
+ * POST /api/borrow-history                   – idempotent upsert of a borrow record by txHash.
+ *
+ * Records are written by the frontend immediately after a successful `borrowWithEthCollateral`
+ * or `borrowWithTokenCollateral` on-chain transaction.
+ */
 import { NextResponse } from "next/server";
 import { getPrisma } from "@/lib/prisma";
 
@@ -9,7 +18,7 @@ export async function GET(request: Request) {
   const history = await prisma.borrowTransaction.findMany({
     where: wallet ? { walletAddress: wallet } : undefined,
     orderBy: { createdAt: "desc" },
-    take: 20
+    take: 20,
   });
 
   return NextResponse.json(history);
@@ -17,10 +26,19 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const body = await request.json();
-  const { walletAddress, collateralSymbol = "ETH", collateralAmount, borrowAmount, txHash } = body;
+  const {
+    walletAddress,
+    collateralSymbol = "ETH",
+    collateralAmount,
+    borrowAmount,
+    txHash,
+  } = body;
 
   if (!walletAddress || !collateralAmount || !borrowAmount || !txHash) {
-    return NextResponse.json({ message: "Missing borrow history fields" }, { status: 400 });
+    return NextResponse.json(
+      { message: "Missing borrow history fields" },
+      { status: 400 },
+    );
   }
 
   const prisma = getPrisma();
@@ -32,8 +50,8 @@ export async function POST(request: Request) {
       collateralSymbol,
       collateralAmount,
       borrowAmount,
-      txHash
-    }
+      txHash,
+    },
   });
 
   return NextResponse.json(record, { status: 201 });

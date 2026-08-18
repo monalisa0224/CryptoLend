@@ -1,3 +1,12 @@
+/**
+ * Repay History API
+ * -----------------
+ * GET  /api/repay-history?wallet=<address>  – returns last 20 repay records for the wallet.
+ * POST /api/repay-history                   – idempotent upsert of a repay record by txHash.
+ *
+ * Records are written after successful `repayUsdt` or `repayFullLoan` transactions.
+ * `interestPaid` and `principalPaid` are estimated by the frontend from pre-tx position state.
+ */
 import { NextResponse } from "next/server";
 import { getPrisma } from "@/lib/prisma";
 
@@ -9,7 +18,7 @@ export async function GET(request: Request) {
   const history = await prisma.repayTransaction.findMany({
     where: wallet ? { walletAddress: wallet } : undefined,
     orderBy: { createdAt: "desc" },
-    take: 20
+    take: 20,
   });
 
   return NextResponse.json(history);
@@ -17,10 +26,19 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const body = await request.json();
-  const { walletAddress, amount, interestPaid = "0", principalPaid = "0", txHash } = body;
+  const {
+    walletAddress,
+    amount,
+    interestPaid = "0",
+    principalPaid = "0",
+    txHash,
+  } = body;
 
   if (!walletAddress || !amount || !txHash) {
-    return NextResponse.json({ message: "Missing repay history fields" }, { status: 400 });
+    return NextResponse.json(
+      { message: "Missing repay history fields" },
+      { status: 400 },
+    );
   }
 
   const prisma = getPrisma();
@@ -32,8 +50,8 @@ export async function POST(request: Request) {
       amount,
       interestPaid,
       principalPaid,
-      txHash
-    }
+      txHash,
+    },
   });
 
   return NextResponse.json(record, { status: 201 });
