@@ -72,3 +72,5 @@ Behavior:
 
 - Amount fields are stored as strings to preserve decimal formatting from UI submissions.
 - APIs are simple and trust frontend shape; stronger schema validation can be added later.
+
+SQLlite --> Query
